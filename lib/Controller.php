@@ -1,4 +1,4 @@
-<?php
+<?php declare(strict_types=1);
 /**
  * PrivateBin
  *
@@ -7,14 +7,18 @@
  * @link      https://github.com/PrivateBin/PrivateBin
  * @copyright 2012 Sébastien SAUVAGE (sebsauvage.net)
  * @license   https://www.opensource.org/licenses/zlib-license.php The zlib/libpng License
- * @version   1.3.5
  */
 
 namespace PrivateBin;
 
 use Exception;
+use PrivateBin\Exception\TranslatedException;
 use PrivateBin\Persistence\ServerSalt;
 use PrivateBin\Persistence\TrafficLimiter;
+use PrivateBin\Proxy\AbstractProxy;
+use PrivateBin\Proxy\ChhotoProxy;
+use PrivateBin\Proxy\ShlinkProxy;
+use PrivateBin\Proxy\YourlsProxy;
 
 /**
  * Controller
@@ -28,21 +32,21 @@ class Controller
      *
      * @const string
      */
-    const VERSION = '1.3.5';
+    const VERSION = '2.1.1';
 
     /**
      * minimal required PHP version
      *
      * @const string
      */
-    const MIN_PHP_VERSION = '5.6.0';
+    const MIN_PHP_VERSION = '7.4.0';
 
     /**
-     * show the same error message if the paste expired or does not exist
+     * show the same error message if the document expired or does not exist
      *
      * @const string
      */
-    const GENERIC_ERROR = 'Paste does not exist, has expired or has been deleted.';
+    const GENERIC_ERROR = 'Document does not exist, has expired or has been deleted.';
 
     /**
      * configuration
@@ -69,6 +73,14 @@ class Controller
     private $_status = '';
 
     /**
+     * status message
+     *
+     * @access private
+     * @var    bool
+     */
+    private $_is_deleted = false;
+
+    /**
      * JSON message
      *
      * @access private
@@ -80,7 +92,7 @@ class Controller
      * Factory of instance models
      *
      * @access private
-     * @var    model
+     * @var    Model
      */
     private $_model;
 
@@ -88,7 +100,7 @@ class Controller
      * request
      *
      * @access private
-     * @var    request
+     * @var    Request
      */
     private $_request;
 
@@ -105,19 +117,24 @@ class Controller
      *
      * initializes and runs PrivateBin
      *
+     * @param ?Configuration $config
+     *
      * @access public
      * @throws Exception
      */
-    public function __construct()
+    public function __construct(?Configuration $config = null)
     {
-        if (version_compare(PHP_VERSION, self::MIN_PHP_VERSION) < 0) {
-            throw new Exception(I18n::_('%s requires php %s or above to work. Sorry.', I18n::_('PrivateBin'), self::MIN_PHP_VERSION), 1);
+        if (version_compare(PHP_VERSION, self::MIN_PHP_VERSION, '<')) {
+            error_log(I18n::_('%s requires php %s or above to work. Sorry.', I18n::_('PrivateBin'), self::MIN_PHP_VERSION));
+            return;
         }
-        if (strlen(PATH) < 0 && substr(PATH, -1) !== DIRECTORY_SEPARATOR) {
-            throw new Exception(I18n::_('%s requires the PATH to end in a "%s". Please update the PATH in your index.php.', I18n::_('PrivateBin'), DIRECTORY_SEPARATOR), 5);
+        if (strlen(PATH) > 0 && substr(PATH, -1) !== DIRECTORY_SEPARATOR) {
+            error_log(I18n::_('%s requires the PATH to end in a "%s". Please update the PATH in your index.php.', I18n::_('PrivateBin'), DIRECTORY_SEPARATOR));
+            return;
         }
 
-        // load config from ini file, initialize required classes
+        // load config (using ini file by default) & initialize required classes
+        $this->_conf = $config ?? new Configuration();
         $this->_init();
 
         switch ($this->_request->getOperation()) {
@@ -136,7 +153,18 @@ class Controller
             case 'jsonld':
                 $this->_jsonld($this->_request->getParam('jsonld'));
                 return;
+            case 'yourlsproxy':
+                $this->_shortenerproxy(new YourlsProxy($this->_conf, $this->_request->getParam('link')));
+                break;
+            case 'shlinkproxy':
+                $this->_shortenerproxy(new ShlinkProxy($this->_conf, $this->_request->getParam('link')));
+                break;
+            case 'chhotoproxy':
+                $this->_shortenerproxy(new ChhotoProxy($this->_conf, $this->_request->getParam('link')));
+                break;
         }
+
+        $this->_setCacheHeaders();
 
         // output JSON or HTML
         if ($this->_request->isJsonApiCall()) {
@@ -144,6 +172,9 @@ class Controller
             header('Access-Control-Allow-Origin: *');
             header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE');
             header('Access-Control-Allow-Headers: X-Requested-With, Content-Type');
+            header('X-Content-Type-Options: nosniff');
+            header('X-Uncompressed-Content-Length: ' . strlen($this->_json));
+            header('Access-Control-Expose-Headers: X-Uncompressed-Content-Length');
             echo $this->_json;
         } else {
             $this->_view();
@@ -158,39 +189,89 @@ class Controller
      */
     private function _init()
     {
-        $this->_conf    = new Configuration;
-        $this->_model   = new Model($this->_conf);
+        $this->_model = new Model($this->_conf);
         $this->_request = new Request;
         $this->_urlBase = $this->_request->getRequestUri();
 
-        // set default language
+        $this->_setDefaultLanguage();
+        $this->_setDefaultTemplate();
+    }
+
+    /**
+     * Set default language
+     *
+     * @access private
+     * @throws Exception
+     */
+    private function _setDefaultLanguage()
+    {
         $lang = $this->_conf->getKey('languagedefault');
         I18n::setLanguageFallback($lang);
         // force default language, if language selection is disabled and a default is set
-        if (!$this->_conf->getKey('languageselection') && strlen($lang) == 2) {
+        if (!$this->_conf->getKey('languageselection') && (
+            in_array($lang, I18n::getAvailableLanguages(), true) ||
+            $lang === 'en'
+        )) {
             $_COOKIE['lang'] = $lang;
-            setcookie('lang', $lang, 0, '', '', true);
+            setcookie('lang', $lang, ['SameSite' => 'Lax', 'Secure' => true]);
         }
+    }
+
+    /**
+     * Set default template
+     *
+     * @access private
+     * @throws Exception
+     */
+    private function _setDefaultTemplate()
+    {
+        $templates = $this->_conf->getKey('availabletemplates');
+        $template = $this->_conf->getKey('template');
+        if (!in_array($template, $templates, true)) {
+            $templates[] = $template;
+        }
+        TemplateSwitcher::setAvailableTemplates($templates);
+        TemplateSwitcher::setTemplateFallback($template);
+
+        // force default template, if template selection is disabled
+        if (!$this->_conf->getKey('templateselection') && array_key_exists('template', $_COOKIE)) {
+            unset($_COOKIE['template']); // ensure value is not re-used in template switcher
+            $expiredInAllTimezones = time() - 86400;
+            setcookie('template', '', ['expires' => $expiredInAllTimezones, 'SameSite' => 'Lax', 'Secure' => true]);
+        }
+    }
+
+    /**
+     * Turn off browser caching
+     *
+     * @access private
+     */
+    private function _setCacheHeaders()
+    {
+        // set headers to disable caching
+        $time = gmdate('D, d M Y H:i:s \G\M\T');
+        header('Cache-Control: no-store, no-cache, no-transform, must-revalidate');
+        header('Pragma: no-cache');
+        header('Expires: ' . $time);
+        header('Last-Modified: ' . $time);
+        header('Vary: Accept');
     }
 
     /**
      * Store new paste or comment
      *
-     * POST contains one or both:
-     * data = json encoded FormatV2 encrypted text (containing keys: iv,v,iter,ks,ts,mode,adata,cipher,salt,ct)
-     * attachment = json encoded FormatV2 encrypted text (containing keys: iv,v,iter,ks,ts,mode,adata,cipher,salt,ct)
-     *
-     * All optional data will go to meta information:
-     * expire (optional) = expiration delay (never,5min,10min,1hour,1day,1week,1month,1year,burn) (default:never)
-     * formatter (optional) = format to display the paste as (plaintext,syntaxhighlighting,markdown) (default:syntaxhighlighting)
-     * burnafterreading (optional) = if this paste may only viewed once ? (0/1) (default:0)
-     * opendiscusssion (optional) = is the discussion allowed on this paste ? (0/1) (default:0)
-     * attachmentname = json encoded FormatV2 encrypted text (containing keys: iv,v,iter,ks,ts,mode,adata,cipher,salt,ct)
-     * nickname (optional) = in discussion, encoded FormatV2 encrypted text nickname of author of comment (containing keys: iv,v,iter,ks,ts,mode,adata,cipher,salt,ct)
-     * parentid (optional) = in discussion, which comment this comment replies to.
-     * pasteid (optional) = in discussion, which paste this comment belongs to.
+     * POST contains:
+     * JSON encoded object with mandatory keys:
+     *   v = 2 (version)
+     *   adata (array)
+     *   ct (base64 encoded, encrypted text)
+     * meta (optional):
+     *   expire = expiration delay (never,5min,10min,1hour,1day,1week,1month,1year,burn) (default:1week)
+     * parentid (optional) = in discussions, which comment this comment replies to.
+     * pasteid (optional) = in discussions, which paste this comment belongs to.
      *
      * @access private
+     * @throws Exception
      * @return string
      */
     private function _create()
@@ -199,35 +280,21 @@ class Controller
         ServerSalt::setStore($this->_model->getStore());
         TrafficLimiter::setConfiguration($this->_conf);
         TrafficLimiter::setStore($this->_model->getStore());
-        if (!TrafficLimiter::canPass()) {
-            $this->_return_message(
-                1, I18n::_(
-                    'Please wait %d seconds between each post.',
-                    $this->_conf->getKey('limit', 'traffic')
-                )
-            );
+        $data = [];
+        try {
+            TrafficLimiter::canPass();
+            $data = $this->_request->getData($this->_conf->getKey('sizelimit'));
+        } catch (TranslatedException $e) {
+            $this->_json_error($e->getMessage());
             return;
         }
 
-        $data      = $this->_request->getData();
         $isComment = array_key_exists('pasteid', $data) &&
             !empty($data['pasteid']) &&
             array_key_exists('parentid', $data) &&
             !empty($data['parentid']);
         if (!FormatV2::isValid($data, $isComment)) {
-            $this->_return_message(1, I18n::_('Invalid data.'));
-            return;
-        }
-        $sizelimit = $this->_conf->getKey('sizelimit');
-        // Ensure content is not too big.
-        if (strlen($data['ct']) > $sizelimit) {
-            $this->_return_message(
-                1,
-                I18n::_(
-                    'Paste is limited to %s of encrypted data.',
-                    Filter::formatHumanReadableSize($sizelimit)
-                )
-            );
+            $this->_json_error(I18n::_('Invalid data.'));
             return;
         }
 
@@ -239,31 +306,30 @@ class Controller
                     $comment = $paste->getComment($data['parentid']);
                     $comment->setData($data);
                     $comment->store();
+                    $this->_json_result($comment->getId());
                 } catch (Exception $e) {
-                    $this->_return_message(1, $e->getMessage());
-                    return;
+                    $this->_json_error($e->getMessage());
                 }
-                $this->_return_message(0, $comment->getId());
             } else {
-                $this->_return_message(1, I18n::_('Invalid data.'));
+                $this->_json_error(I18n::_('Invalid data.'));
             }
         }
         // The user posts a standard paste.
         else {
-            $this->_model->purge();
-            $paste = $this->_model->getPaste();
             try {
+                $this->_model->purge();
+                $paste = $this->_model->getPaste();
                 $paste->setData($data);
                 $paste->store();
+                $this->_json_result($paste->getId(), ['deletetoken' => $paste->getDeleteToken()]);
             } catch (Exception $e) {
-                return $this->_return_message(1, $e->getMessage());
+                $this->_json_error($e->getMessage());
             }
-            $this->_return_message(0, $paste->getId(), array('deletetoken' => $paste->getDeleteToken()));
         }
     }
 
     /**
-     * Delete an existing paste
+     * Delete an existing document
      *
      * @access private
      * @param  string $dataid
@@ -274,33 +340,34 @@ class Controller
         try {
             $paste = $this->_model->getPaste($dataid);
             if ($paste->exists()) {
-                // accessing this method ensures that the paste would be
+                // accessing this method ensures that the document would be
                 // deleted if it has already expired
                 $paste->get();
                 if (hash_equals($paste->getDeleteToken(), $deletetoken)) {
-                    // Paste exists and deletion token is valid: Delete the paste.
+                    // Document exists and deletion token is valid: Delete the it.
                     $paste->delete();
-                    $this->_status = 'Paste was properly deleted.';
+                    $this->_status = 'Document was properly deleted.';
+                    $this->_is_deleted = true;
                 } else {
-                    $this->_error = 'Wrong deletion token. Paste was not deleted.';
+                    $this->_error = 'Wrong deletion token. Document was not deleted.';
                 }
             } else {
                 $this->_error = self::GENERIC_ERROR;
             }
-        } catch (Exception $e) {
+        } catch (TranslatedException $e) {
             $this->_error = $e->getMessage();
         }
         if ($this->_request->isJsonApiCall()) {
-            if (strlen($this->_error)) {
-                $this->_return_message(1, $this->_error);
+            if (empty($this->_error)) {
+                $this->_json_result($dataid);
             } else {
-                $this->_return_message(0, $dataid);
+                $this->_json_error(I18n::_($this->_error));
             }
         }
     }
 
     /**
-     * Read an existing paste or comment, only allowed via a JSON API call
+     * Read an existing document, only allowed via a JSON API call
      *
      * @access private
      * @param  string $dataid
@@ -318,12 +385,12 @@ class Controller
                 if (array_key_exists('salt', $data['meta'])) {
                     unset($data['meta']['salt']);
                 }
-                $this->_return_message(0, $dataid, (array) $data);
+                $this->_json_result($dataid, (array) $data);
             } else {
-                $this->_return_message(1, self::GENERIC_ERROR);
+                $this->_json_error(I18n::_(self::GENERIC_ERROR));
             }
-        } catch (Exception $e) {
-            $this->_return_message(1, $e->getMessage());
+        } catch (TranslatedException $e) {
+            $this->_json_error($e->getMessage());
         }
     }
 
@@ -331,30 +398,26 @@ class Controller
      * Display frontend.
      *
      * @access private
+     * @throws Exception
      */
     private function _view()
     {
-        // set headers to disable caching
-        $time = gmdate('D, d M Y H:i:s \G\M\T');
-        header('Cache-Control: no-store, no-cache, no-transform, must-revalidate');
-        header('Pragma: no-cache');
-        header('Expires: ' . $time);
-        header('Last-Modified: ' . $time);
-        header('Vary: Accept');
         header('Content-Security-Policy: ' . $this->_conf->getKey('cspheader'));
         header('Cross-Origin-Resource-Policy: same-origin');
         header('Cross-Origin-Embedder-Policy: require-corp');
-        header('Cross-Origin-Opener-Policy: same-origin');
-        header('Permissions-Policy: interest-cohort=()');
+        // disabled, because it prevents links from a document to the same site to
+        // be opened. Didn't work with `same-origin-allow-popups` either.
+        // See issue https://github.com/PrivateBin/PrivateBin/issues/970 for details.
+        // header('Cross-Origin-Opener-Policy: same-origin');
+        header('Permissions-Policy: browsing-topics=()');
         header('Referrer-Policy: no-referrer');
         header('X-Content-Type-Options: nosniff');
         header('X-Frame-Options: deny');
-        header('X-XSS-Protection: 1; mode=block');
 
         // label all the expiration options
-        $expire = array();
+        $expire = [];
         foreach ($this->_conf->getSection('expire_options') as $time => $seconds) {
-            $expire[$time] = ($seconds == 0) ? I18n::_(ucfirst($time)) : Filter::formatHumanReadableTime($time);
+            $expire[$time] = ($seconds === 0) ? I18n::_(ucfirst($time)) : Filter::formatHumanReadableTime($time);
         }
 
         // translate all the formatter options
@@ -364,14 +427,38 @@ class Controller
         $languageselection = '';
         if ($this->_conf->getKey('languageselection')) {
             $languageselection = I18n::getLanguage();
-            setcookie('lang', $languageselection, 0, '', '', true);
+            setcookie('lang', $languageselection, ['SameSite' => 'Lax', 'Secure' => true]);
         }
 
+        // set template cookie if that functionality was enabled
+        $templateselection = '';
+        if ($this->_conf->getKey('templateselection')) {
+            $templateselection = TemplateSwitcher::getTemplate();
+            setcookie('template', $templateselection, ['SameSite' => 'Lax', 'Secure' => true]);
+        }
+
+        // strip policies that are unsupported in meta tag
+        $metacspheader = str_replace(
+            [
+                'frame-ancestors \'none\'; ',
+                '; sandbox allow-same-origin allow-scripts allow-forms allow-modals allow-downloads',
+            ],
+            '',
+            $this->_conf->getKey('cspheader')
+        );
+
         $page = new View;
-        $page->assign('NAME', $this->_conf->getKey('name'));
-        $page->assign('BASEPATH', I18n::_($this->_conf->getKey('basepath')));
+        $page->assign('CSPHEADER', $metacspheader);
         $page->assign('ERROR', I18n::_($this->_error));
+        $page->assign('NAME', $this->_conf->getKey('name'));
+        if (in_array($this->_request->getOperation(), ['shlinkproxy', 'yourlsproxy', 'chhotoproxy'], true)) {
+            $page->assign('SHORTURL', $this->_status);
+            $page->draw('shortenerproxy');
+            return;
+        }
+        $page->assign('BASEPATH', I18n::_($this->_conf->getKey('basepath')));
         $page->assign('STATUS', I18n::_($this->_status));
+        $page->assign('ISDELETED', $this->_is_deleted);
         $page->assign('VERSION', self::VERSION);
         $page->assign('DISCUSSION', $this->_conf->getKey('discussion'));
         $page->assign('OPENDISCUSSION', $this->_conf->getKey('opendiscussion'));
@@ -385,17 +472,21 @@ class Controller
         $page->assign('BURNAFTERREADINGSELECTED', $this->_conf->getKey('burnafterreadingselected'));
         $page->assign('PASSWORD', $this->_conf->getKey('password'));
         $page->assign('FILEUPLOAD', $this->_conf->getKey('fileupload'));
-        $page->assign('ZEROBINCOMPATIBILITY', $this->_conf->getKey('zerobincompatibility'));
         $page->assign('LANGUAGESELECTION', $languageselection);
         $page->assign('LANGUAGES', I18n::getLanguageLabels(I18n::getAvailableLanguages()));
+        $page->assign('TEMPLATESELECTION', $templateselection);
+        $page->assign('TEMPLATES', TemplateSwitcher::getAvailableTemplates());
         $page->assign('EXPIRE', $expire);
         $page->assign('EXPIREDEFAULT', $this->_conf->getKey('default', 'expire'));
         $page->assign('URLSHORTENER', $this->_conf->getKey('urlshortener'));
+        $page->assign('SHORTENBYDEFAULT', $this->_conf->getKey('shortenbydefault'));
         $page->assign('QRCODE', $this->_conf->getKey('qrcode'));
+        $page->assign('EMAIL', $this->_conf->getKey('email'));
         $page->assign('HTTPWARNING', $this->_conf->getKey('httpwarning'));
         $page->assign('HTTPSLINK', 'https://' . $this->_request->getHost() . $this->_request->getRequestUri());
         $page->assign('COMPRESSION', $this->_conf->getKey('compression'));
-        $page->draw($this->_conf->getKey('template'));
+        $page->assign('SRI', $this->_conf->getSection('sri'));
+        $page->draw(TemplateSwitcher::getTemplate());
     }
 
     /**
@@ -406,46 +497,85 @@ class Controller
      */
     private function _jsonld($type)
     {
-        if (
-            $type !== 'paste' && $type !== 'comment' &&
-            $type !== 'pastemeta' && $type !== 'commentmeta'
-        ) {
+        if (!in_array($type, [
+            'comment',
+            'commentmeta',
+            'paste',
+            'pastemeta',
+            'types',
+        ])) {
             $type = '';
         }
         $content = '{}';
-        $file    = PUBLIC_PATH . DIRECTORY_SEPARATOR . 'js' . DIRECTORY_SEPARATOR . $type . '.jsonld';
+        $file = PUBLIC_PATH . DIRECTORY_SEPARATOR . 'js' . DIRECTORY_SEPARATOR . $type . '.jsonld';
         if (is_readable($file)) {
             $content = str_replace(
                 '?jsonld=',
-                $this->_urlBase . '?jsonld=',
+                trim(Json::encode($this->_urlBase), '"') . '?jsonld=',
                 file_get_contents($file)
+            );
+        }
+        if ($type === 'types') {
+            $content = str_replace(
+                implode('", "', array_keys($this->_conf->getDefaults()['expire_options'])),
+                implode('", "', array_keys($this->_conf->getSection('expire_options'))),
+                $content
             );
         }
 
         header('Content-type: application/ld+json');
         header('Access-Control-Allow-Origin: *');
         header('Access-Control-Allow-Methods: GET');
+        header('X-Content-Type-Options: nosniff');
         echo $content;
     }
 
     /**
-     * prepares JSON encoded status message
+     * prepares JSON encoded error message
      *
      * @access private
-     * @param  int $status
-     * @param  string $message
-     * @param  array $other
+     * @param  string $error
+     * @throws JsonException
      */
-    private function _return_message($status, $message, $other = array())
+    private function _json_error($error)
     {
-        $result = array('status' => $status);
-        if ($status) {
-            $result['message'] = I18n::_($message);
-        } else {
-            $result['id']  = $message;
-            $result['url'] = $this->_urlBase . '?' . $message;
-        }
-        $result += $other;
+        $result = [
+            'status'  => 1,
+            'message' => $error,
+        ];
         $this->_json = Json::encode($result);
+    }
+
+    /**
+     * prepares JSON encoded result message
+     *
+     * @access private
+     * @param  string $dataid
+     * @param  array $other
+     * @throws JsonException
+     */
+    private function _json_result($dataid, $other = [])
+    {
+        $result = [
+            'status' => 0,
+            'id'     => $dataid,
+            'url'    => $this->_urlBase . '?' . $dataid,
+        ] + $other;
+        $this->_json = Json::encode($result);
+    }
+
+    /**
+     * Proxies a link using the specified proxy class, and updates the status or error with the response.
+     *
+     * @access private
+     * @param AbstractProxy $proxy The instance of the proxy class.
+     */
+    private function _shortenerproxy(AbstractProxy $proxy)
+    {
+        if ($proxy->isError()) {
+            $this->_error = $proxy->getError();
+        } else {
+            $this->_status = $proxy->getUrl();
+        }
     }
 }

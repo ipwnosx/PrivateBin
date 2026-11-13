@@ -50,7 +50,7 @@ class Type
     const T_LIMITEDBROADCAST = 6;
 
     /**
-     * Multicast address assignments - Indentify a group of interfaces.
+     * Multicast address assignments - Identify a group of interfaces.
      *
      * @var int
      */
@@ -64,7 +64,7 @@ class Type
     const T_LINKLOCAL = 8;
 
     /**
-     * Link local unicast / Linked-scoped unicast.
+     * Link local unicast / Link-scoped unicast.
      *
      * @var int
      */
@@ -102,13 +102,15 @@ class Type
      * Carrier-grade NAT address.
      *
      * @var int
+     *
+     * @since 1.10.0
      */
     const T_CGNAT = 14;
 
     /**
      * Get the name of a type.
      *
-     * @param int $type
+     * @param int|mixed $type
      *
      * @return string
      */
@@ -118,33 +120,33 @@ class Type
             case static::T_UNSPECIFIED:
                 return 'Unspecified/unknown address';
             case static::T_RESERVED:
-                 return 'Reserved/internal use only';
+                return 'Reserved/internal use only';
             case static::T_THISNETWORK:
-                 return 'Refer to source hosts on "this" network';
+                return 'Refer to source hosts on "this" network';
             case static::T_LOOPBACK:
-                 return 'Internet host loopback address';
+                return 'Internet host loopback address';
             case static::T_ANYCASTRELAY:
-                 return 'Relay anycast address';
+                return 'Relay anycast address';
             case static::T_LIMITEDBROADCAST:
-                 return '"Limited broadcast" destination address';
+                return '"Limited broadcast" destination address';
             case static::T_MULTICAST:
-                 return 'Multicast address assignments - Indentify a group of interfaces';
+                return 'Multicast address assignments - Identify a group of interfaces';
             case static::T_LINKLOCAL:
-                 return '"Link local" address, allocated for communication between hosts on a single link';
+                return '"Link local" address, allocated for communication between hosts on a single link';
             case static::T_LINKLOCAL_UNICAST:
-                return 'Link local unicast / Linked-scoped unicast';
+                return 'Link local unicast / Link-scoped unicast';
             case static::T_DISCARDONLY:
-                 return 'Discard only';
+                return 'Discard only';
             case static::T_DISCARD:
-                 return 'Discard';
+                return 'Discard';
             case static::T_PRIVATENETWORK:
-                 return 'For use in private networks';
+                return 'For use in private networks';
             case static::T_PUBLIC:
-                 return 'Public address';
+                return 'Public address';
             case static::T_CGNAT:
                 return 'Carrier-grade NAT';
             default:
-                return $type === null ? 'Unknown type' : sprintf('Unknown type (%s)', $type);
+                return $type === null ? 'Unknown type' : sprintf('Unknown type (%s)', print_r($type, true));
         }
     }
 }

@@ -1,4 +1,4 @@
-<?php
+<?php declare(strict_types=1);
 /**
  * PrivateBin
  *
@@ -7,10 +7,15 @@
  * @link      https://github.com/PrivateBin/PrivateBin
  * @copyright 2012 Sébastien SAUVAGE (sebsauvage.net)
  * @license   https://www.opensource.org/licenses/zlib-license.php The zlib/libpng License
- * @version   1.3.5
  */
 
 namespace PrivateBin;
+
+use AppendIterator;
+use GlobIterator;
+
+use function array_key_exists;
+use function in_array;
 
 /**
  * I18n
@@ -44,7 +49,7 @@ class I18n
      * @static
      * @var    array
      */
-    protected static $_languageLabels = array();
+    protected static $_languageLabels = [];
 
     /**
      * available languages
@@ -53,7 +58,7 @@ class I18n
      * @static
      * @var    array
      */
-    protected static $_availableLanguages = array();
+    protected static $_availableLanguages = [];
 
     /**
      * path to language files
@@ -71,20 +76,20 @@ class I18n
      * @static
      * @var    array
      */
-    protected static $_translations = array();
+    protected static $_translations = [];
 
     /**
      * translate a string, alias for translate()
      *
      * @access public
      * @static
-     * @param  string $messageId
+     * @param  string|array $messageId
      * @param  mixed $args one or multiple parameters injected into placeholders
      * @return string
      */
-    public static function _($messageId)
+    public static function _($messageId, ...$args)
     {
-        return forward_static_call_array('self::translate', func_get_args());
+        return forward_static_call_array('PrivateBin\I18n::translate', func_get_args());
     }
 
     /**
@@ -92,16 +97,16 @@ class I18n
      *
      * @access public
      * @static
-     * @param  string $messageId
+     * @param  string|array $messageId
      * @param  mixed $args one or multiple parameters injected into placeholders
      * @return string
      */
-    public static function translate($messageId)
+    public static function translate($messageId, ...$args)
     {
         if (empty($messageId)) {
             return $messageId;
         }
-        if (count(self::$_translations) === 0) {
+        if (empty(self::$_translations)) {
             self::loadTranslations();
         }
         $messages = $messageId;
@@ -111,11 +116,11 @@ class I18n
         if (!array_key_exists($messageId, self::$_translations)) {
             self::$_translations[$messageId] = $messages;
         }
-        $args = func_get_args();
+        array_unshift($args, $messageId);
         if (is_array(self::$_translations[$messageId])) {
             $number = (int) $args[1];
-            $key    = self::_getPluralForm($number);
-            $max    = count(self::$_translations[$messageId]) - 1;
+            $key = self::_getPluralForm($number);
+            $max = count(self::$_translations[$messageId]) - 1;
             if ($key > $max) {
                 $key = $max;
             }
@@ -125,14 +130,16 @@ class I18n
         } else {
             $args[0] = self::$_translations[$messageId];
         }
-        // encode any non-integer arguments and the message ID, if it doesn't contain a link
+        // encode any non-integer arguments, but not the message itself
+        // The message ID comes from trusted sources (code or translation JSON files),
+        // while parameters may come from untrusted sources and need HTML entity encoding
+        // to prevent XSS attacks when the message is inserted into HTML context
         $argsCount = count($args);
-        if ($argsCount > 1) {
-            for ($i = 0; $i < $argsCount; ++$i) {
-                if (($i > 0 && !is_int($args[$i])) || strpos($args[0], '<a') === false) {
-                    $args[$i] = self::encode($args[$i]);
-                }
+        for ($i = 1; $i < $argsCount; ++$i) {
+            if (is_int($args[$i])) {
+                continue;
             }
+            $args[$i] = self::encode($args[$i]);
         }
         return call_user_func_array('sprintf', $args);
     }
@@ -157,6 +164,7 @@ class I18n
      *
      * @access public
      * @static
+     * @throws JsonException
      */
     public static function loadTranslations()
     {
@@ -167,19 +175,48 @@ class I18n
             array_key_exists('lang', $_COOKIE) &&
             ($key = array_search($_COOKIE['lang'], $availableLanguages)) !== false
         ) {
-            $match = $availableLanguages[$key];
+            self::$_language = $availableLanguages[$key];
         }
         // find a translation file matching the browsers language preferences
         else {
-            $match = self::_getMatchingLanguage(
-                self::getBrowserLanguages(), $availableLanguages
-            );
+            self::$_language = self::_getLanguageFromHttpHeader($availableLanguages);
         }
 
         // load translations
-        self::$_language     = $match;
-        self::$_translations = ($match == 'en') ? array() : Json::decode(
-            file_get_contents(self::_getPath($match . '.json'))
+        if (self::$_language === 'en') {
+            self::$_translations = [];
+        } else {
+            $data = file_get_contents(self::_getPath(self::$_language . '.json'));
+            self::$_translations = Json::decode($data);
+        }
+    }
+
+    /**
+     * get languages bsed on the HTTP header
+     *
+     * @access private
+     * @static
+     * @param  array $availableLanguages
+     * @return string
+     */
+    private static function _getLanguageFromHttpHeader($availableLanguages)
+    {
+        if (!array_key_exists('HTTP_ACCEPT_LANGUAGE', $_SERVER)) {
+            return self::$_languageFallback;
+        }
+
+        // as per https://stackoverflow.com/a/9051957/5008962 we can use the I10n module
+        // if loaded, but it only returns the primary preference (aka one string)
+        if (function_exists('locale_accept_from_http')) {
+            $detectedBestLanguage = locale_accept_from_http($_SERVER['HTTP_ACCEPT_LANGUAGE']);
+            if (in_array($detectedBestLanguage, $availableLanguages)) {
+                return $detectedBestLanguage;
+            }
+        }
+
+        return self::_getMatchingLanguage(
+            self::_normalizeBrowserLanguages(self::getBrowserLanguages(), $availableLanguages),
+            $availableLanguages
         );
     }
 
@@ -192,11 +229,16 @@ class I18n
      */
     public static function getAvailableLanguages()
     {
-        if (count(self::$_availableLanguages) == 0) {
-            $i18n = dir(self::_getPath());
-            while (false !== ($file = $i18n->read())) {
-                if (preg_match('/^([a-z]{2}).json$/', $file, $match) === 1) {
-                    self::$_availableLanguages[] = $match[1];
+        if (count(self::$_availableLanguages) === 0) {
+            self::$_availableLanguages[] = 'en'; // en.json is not part of the release archive
+            $languageIterator = new AppendIterator();
+            $languageIterator->append(new GlobIterator(self::_getPath('??.json')));
+            $languageIterator->append(new GlobIterator(self::_getPath('???.json'))); // for jbo
+            $languageIterator->append(new GlobIterator(self::_getPath('??-??.json'))); // for regional variants like zh-tw
+            foreach ($languageIterator as $file) {
+                $language = $file->getBasename('.json');
+                if ($language !== 'en') {
+                    self::$_availableLanguages[] = $language;
                 }
             }
         }
@@ -214,12 +256,12 @@ class I18n
      */
     public static function getBrowserLanguages()
     {
-        $languages = array();
+        $languages = [];
         if (array_key_exists('HTTP_ACCEPT_LANGUAGE', $_SERVER)) {
             $languageRanges = explode(',', trim($_SERVER['HTTP_ACCEPT_LANGUAGE']));
             foreach ($languageRanges as $languageRange) {
                 if (preg_match(
-                    '/(\*|[a-zA-Z0-9]{1,8}(?:-[a-zA-Z0-9]{1,8})*)(?:\s*;\s*q\s*=\s*(0(?:\.\d{0,3})|1(?:\.0{0,3})))?/',
+                    '/^(\*|[a-zA-Z0-9]{1,8}(?:-[a-zA-Z0-9]{1,8})*)(?:\s*;\s*q\s*=\s*(0(?:\.\d{0,3})|1(?:\.0{0,3})))?$/',
                     trim($languageRange), $match
                 )) {
                     if (!isset($match[2])) {
@@ -228,12 +270,45 @@ class I18n
                         $match[2] = (string) floatval($match[2]);
                     }
                     if (!isset($languages[$match[2]])) {
-                        $languages[$match[2]] = array();
+                        $languages[$match[2]] = [];
                     }
                     $languages[$match[2]][] = strtolower($match[1]);
                 }
             }
             krsort($languages);
+        }
+        return $languages;
+    }
+
+    /**
+     * normalize browser language aliases to available locale IDs
+     *
+     * @access protected
+     * @static
+     * @param  array $languages
+     * @param  array $availableLanguages
+     * @return array
+     */
+    protected static function _normalizeBrowserLanguages($languages, $availableLanguages)
+    {
+        // Base zh stays before zh-tw because regional locales are appended after base locales.
+        $hasSimplifiedChinese = in_array('zh', $availableLanguages, true);
+        $hasTraditionalChinese = in_array('zh-tw', $availableLanguages, true);
+        foreach ($languages as $quality => $languageRanges) {
+            foreach ($languageRanges as $index => $languageRange) {
+                $isSimplifiedChinese = $languageRange === 'zh-hans' || str_starts_with($languageRange, 'zh-hans-') ||
+                    $languageRange === 'zh-cn' || str_starts_with($languageRange, 'zh-cn-') ||
+                    $languageRange === 'zh-sg' || str_starts_with($languageRange, 'zh-sg-');
+                $isTraditionalChinese = str_starts_with($languageRange, 'zh-tw-') ||
+                    $languageRange === 'zh-hant' || str_starts_with($languageRange, 'zh-hant-') ||
+                    $languageRange === 'zh-hk' || str_starts_with($languageRange, 'zh-hk-') ||
+                    $languageRange === 'zh-mo' || str_starts_with($languageRange, 'zh-mo-');
+                if ($hasSimplifiedChinese && $isSimplifiedChinese) {
+                    $languages[$quality][$index] = 'zh';
+                } elseif ($hasTraditionalChinese && $isTraditionalChinese) {
+                    $languages[$quality][$index] = 'zh-tw';
+                }
+            }
         }
         return $languages;
     }
@@ -258,18 +333,45 @@ class I18n
      * @access public
      * @static
      * @param  array $languages
+     * @throws JsonException
      * @return array
      */
-    public static function getLanguageLabels($languages = array())
+    public static function getLanguageLabels($languages = [])
     {
         $file = self::_getPath('languages.json');
-        if (count(self::$_languageLabels) == 0 && is_readable($file)) {
-            self::$_languageLabels = Json::decode(file_get_contents($file));
+        if (count(self::$_languageLabels) === 0 && is_readable($file)) {
+            $data = file_get_contents($file);
+            self::$_languageLabels = Json::decode($data);
         }
-        if (count($languages) == 0) {
+        if (count($languages) === 0) {
             return self::$_languageLabels;
         }
         return array_intersect_key(self::$_languageLabels, array_flip($languages));
+    }
+
+    /**
+     * determines if the current language is written right-to-left (RTL)
+     *
+     * @access public
+     * @static
+     * @return bool
+     */
+    public static function isRtl()
+    {
+        return in_array(self::$_language, ['ar', 'fa', 'he']);
+    }
+
+    /**
+     * get OS-specific copy hotkey modifier key name based on user agent
+     *
+     * @access public
+     * @static
+     * @return string 'Cmd' on macOS, 'Ctrl' otherwise
+     */
+    public static function getCopyHotkey()
+    {
+        return array_key_exists('HTTP_USER_AGENT', $_SERVER) &&
+            str_contains($_SERVER['HTTP_USER_AGENT'], 'Mac') ? self::_('Cmd') : self::_('Ctrl');
     }
 
     /**
@@ -296,16 +398,16 @@ class I18n
      */
     protected static function _getPath($file = '')
     {
-        if (strlen(self::$_path) == 0) {
+        if (empty(self::$_path)) {
             self::$_path = PUBLIC_PATH . DIRECTORY_SEPARATOR . 'i18n';
         }
-        return self::$_path . (strlen($file) ? DIRECTORY_SEPARATOR . $file : '');
+        return self::$_path . (empty($file) ? '' : DIRECTORY_SEPARATOR . $file);
     }
 
     /**
      * determines the plural form to use based on current language and given number
      *
-     * From: https://localization-guide.readthedocs.org/en/latest/l10n/pluralforms.html
+     * From: https://docs.translatehouse.org/projects/localization-guide/en/latest/l10n/pluralforms.html
      *
      * @access protected
      * @static
@@ -315,28 +417,41 @@ class I18n
     protected static function _getPluralForm($n)
     {
         switch (self::$_language) {
+            case 'ar':
+                return $n === 0 ? 0 : ($n === 1 ? 1 : ($n === 2 ? 2 : ($n % 100 >= 3 && $n % 100 <= 10 ? 3 : ($n % 100 >= 11 ? 4 : 5))));
             case 'cs':
-                return $n == 1 ? 0 : ($n >= 2 && $n <= 4 ? 1 : 2);
+            case 'sk':
+                return $n === 1 ? 0 : ($n >= 2 && $n <= 4 ? 1 : 2);
+            case 'co':
+            case 'fa':
             case 'fr':
             case 'oc':
+            case 'tr':
             case 'zh':
+            case 'zh-tw':
                 return $n > 1 ? 1 : 0;
             case 'he':
                 return $n === 1 ? 0 : ($n === 2 ? 1 : (($n < 0 || $n > 10) && ($n % 10 === 0) ? 2 : 3));
             case 'id':
+            case 'ja':
+            case 'jbo':
+            case 'ko':
+            case 'th':
                 return 0;
             case 'lt':
-                return $n % 10 === 1 && $n % 100 !== 11 ? 0 : (($n % 10 >= 2 && $n % 100 < 10 || $n % 100 >= 20) ? 1 : 2);
+                return $n % 10 === 1 && $n % 100 !== 11 ? 0 : (($n % 10 >= 2 && ($n % 100 < 10 || $n % 100 >= 20)) ? 1 : 2);
             case 'pl':
-                return $n == 1 ? 0 : ($n % 10 >= 2 && $n % 10 <= 4 && ($n % 100 < 10 || $n % 100 >= 20) ? 1 : 2);
+                return $n === 1 ? 0 : ($n % 10 >= 2 && $n % 10 <= 4 && ($n % 100 < 10 || $n % 100 >= 20) ? 1 : 2);
+            case 'ro':
+                return $n === 1 ? 0 : (($n === 0 || ($n % 100 > 0 && $n % 100 < 20)) ? 1 : 2);
             case 'ru':
             case 'uk':
-                return $n % 10 == 1 && $n % 100 != 11 ? 0 : ($n % 10 >= 2 && $n % 10 <= 4 && ($n % 100 < 10 || $n % 100 >= 20) ? 1 : 2);
+                return $n % 10 === 1 && $n % 100 !== 11 ? 0 : ($n % 10 >= 2 && $n % 10 <= 4 && ($n % 100 < 10 || $n % 100 >= 20) ? 1 : 2);
             case 'sl':
-                return $n % 100 == 1 ? 1 : ($n % 100 == 2 ? 2 : ($n % 100 == 3 || $n % 100 == 4 ? 3 : 0));
-            // bg, ca, de, en, es, et, hu, it, nl, no, pt
+                return $n % 100 === 1 ? 1 : ($n % 100 === 2 ? 2 : ($n % 100 === 3 || $n % 100 === 4 ? 3 : 0));
             default:
-                return $n != 1 ? 1 : 0;
+                // bg, ca, de, el, en, es, et, fi, hu, it, nl, no, pt, sv
+                return $n !== 1 ? 1 : 0;
         }
     }
 
@@ -353,24 +468,24 @@ class I18n
      */
     protected static function _getMatchingLanguage($acceptedLanguages, $availableLanguages)
     {
-        $matches = array();
-        $any     = false;
+        $matches = [];
+        $any = false;
         foreach ($acceptedLanguages as $acceptedQuality => $acceptedValues) {
             $acceptedQuality = floatval($acceptedQuality);
             if ($acceptedQuality === 0.0) {
                 continue;
             }
-            foreach ($availableLanguages as $availableValue) {
-                $availableQuality = 1.0;
-                foreach ($acceptedValues as $acceptedValue) {
-                    if ($acceptedValue === '*') {
-                        $any = true;
-                    }
+            foreach ($acceptedValues as $acceptedValue) {
+                if ($acceptedValue === '*') {
+                    $any = true;
+                }
+                foreach ($availableLanguages as $availableValue) {
+                    $availableQuality = 1.0;
                     $matchingGrade = self::_matchLanguage($acceptedValue, $availableValue);
                     if ($matchingGrade > 0) {
                         $q = (string) ($acceptedQuality * $availableQuality * $matchingGrade);
                         if (!isset($matches[$q])) {
-                            $matches[$q] = array();
+                            $matches[$q] = [];
                         }
                         if (!in_array($availableValue, $matches[$q])) {
                             $matches[$q][] = $availableValue;

@@ -2,12 +2,17 @@
 
 namespace IPLib\Address;
 
+use IPLib\ParseStringFlag;
 use IPLib\Range\RangeInterface;
 use IPLib\Range\Subnet;
 use IPLib\Range\Type as RangeType;
+use IPLib\Service\BinaryMath;
+use IPLib\Service\NumberInChunks;
 
 /**
  * An IPv4 address.
+ *
+ * @phpstan-consistent-constructor
  */
 class IPv4 implements AddressInterface
 {
@@ -37,16 +42,16 @@ class IPv4 implements AddressInterface
     /**
      * A string representation of this address than can be used when comparing addresses and ranges.
      *
-     * @var string
+     * @var string|null
      */
     protected $comparableString;
 
     /**
      * An array containing RFC designated address ranges.
      *
-     * @var array|null
+     * @var \IPLib\Address\AssignedRange[]|null
      */
-    private static $reservedRanges = null;
+    private static $reservedRanges;
 
     /**
      * Initializes the instance.
@@ -82,52 +87,94 @@ class IPv4 implements AddressInterface
     }
 
     /**
-     * Parse a string and returns an IPv4 instance if the string is valid, or null otherwise.
+     * @deprecated since 1.17.0: use the parseString() method instead.
+     * For upgrading:
+     * - if $mayIncludePort is true, use the ParseStringFlag::MAY_INCLUDE_PORT flag
+     * - if $supportNonDecimalIPv4 is true, use the ParseStringFlag::IPV4_MAYBE_NON_DECIMAL flag
      *
      * @param string|mixed $address the address to parse
-     * @param bool $mayIncludePort set to false to avoid parsing addresses with ports
-     * @param bool $supportNonDecimalIPv4 set to true to support parsing non decimal (that is, octal and hexadecimal) IPv4 addresses
+     * @param bool $mayIncludePort
+     * @param bool $supportNonDecimalIPv4
      *
      * @return static|null
+     *
+     * @see \IPLib\Address\IPv4::parseString()
+     * @since 1.1.0 added the $mayIncludePort argument
+     * @since 1.10.0 added the $supportNonDecimalIPv4 argument
      */
     public static function fromString($address, $mayIncludePort = true, $supportNonDecimalIPv4 = false)
     {
-        if (!is_string($address) || !strpos($address, '.')) {
+        return static::parseString($address, 0 | ($mayIncludePort ? ParseStringFlag::MAY_INCLUDE_PORT : 0) | ($supportNonDecimalIPv4 ? ParseStringFlag::IPV4_MAYBE_NON_DECIMAL : 0));
+    }
+
+    /**
+     * Parse a string and returns an IPv4 instance if the string is valid, or null otherwise.
+     *
+     * @param string|mixed $address the address to parse
+     * @param int $flags A combination or zero or more flags
+     *
+     * @return static|null
+     *
+     * @see \IPLib\ParseStringFlag
+     * @since 1.17.0
+     */
+    public static function parseString($address, $flags = 0)
+    {
+        if (!is_string($address)) {
             return null;
         }
-        $rxChunk = '0?[0-9]{1,3}';
-        if ($supportNonDecimalIPv4) {
-            $rxChunk = "(?:0[Xx]0*[0-9A-Fa-f]{1,2})|(?:{$rxChunk})";
-        }
-        $rx = "0*?({$rxChunk})\.0*?({$rxChunk})\.0*?({$rxChunk})\.0*?({$rxChunk})";
-        if ($mayIncludePort) {
-            $rx .= '(?::\d+)?';
-        }
+        $flags = (int) $flags;
         $matches = null;
-        if (!preg_match('/^' . $rx . '$/', $address, $matches)) {
-            return null;
-        }
-        $nums = array();
-        for ($i = 1; $i <= 4; $i++) {
-            $s = $matches[$i];
-            if ($supportNonDecimalIPv4) {
-                if (stripos($s, '0x') === 0) {
-                    $n = hexdec(substr($s, 2));
-                } elseif ($s[0] === '0') {
-                    if (!preg_match('/^[0-7]+$/', $s)) {
-                        return null;
-                    }
-                    $n = octdec(substr($s, 1));
-                } else {
-                    $n = (int) $s;
-                }
-            } else {
-                $n = (int) $s;
+        if ($flags & ParseStringFlag::ADDRESS_MAYBE_RDNS) {
+            if (preg_match('/^([12]?[0-9]{1,2}\.[12]?[0-9]{1,2}\.[12]?[0-9]{1,2}\.[12]?[0-9]{1,2})\.in-addr\.arpa\.?$/Di', $address, $matches)) {
+                $address = implode('.', array_reverse(explode('.', $matches[1])));
+                $flags = $flags & ~(ParseStringFlag::IPV4_MAYBE_NON_DECIMAL | ParseStringFlag::IPV4ADDRESS_MAYBE_NON_QUAD_DOTTED);
             }
-            if ($n < 0 || $n > 255) {
+        }
+        if ($flags & ParseStringFlag::IPV4ADDRESS_MAYBE_NON_QUAD_DOTTED) {
+            if (strpos($address, '.') === 0) {
                 return null;
             }
-            $nums[] = (string) $n;
+            $lengthNonHex = '{1,11}';
+            $lengthHex = '{1,8}';
+            $chunk234Optional = true;
+        } else {
+            if (!strpos($address, '.')) {
+                return null;
+            }
+            $lengthNonHex = '{1,3}';
+            $lengthHex = '{1,2}';
+            $chunk234Optional = false;
+        }
+        $rxChunk1 = "0?[0-9]{$lengthNonHex}";
+        if ($flags & ParseStringFlag::IPV4_MAYBE_NON_DECIMAL) {
+            $rxChunk1 = "(?:0[Xx]0*[0-9A-Fa-f]{$lengthHex})|(?:{$rxChunk1})";
+            $onlyDecimal = false;
+        } else {
+            $onlyDecimal = true;
+        }
+        $rxChunk1 = "0*?({$rxChunk1})";
+        $rxChunk234 = "\.{$rxChunk1}";
+        if ($chunk234Optional) {
+            $rxChunk234 = "(?:{$rxChunk234})?";
+        }
+        $rx = "{$rxChunk1}{$rxChunk234}{$rxChunk234}{$rxChunk234}";
+        if ($flags & ParseStringFlag::MAY_INCLUDE_PORT) {
+            $rx .= '(?::\d+)?';
+        }
+        if (!preg_match('/^' . $rx . '$/D', $address, $matches)) {
+            return null;
+        }
+        $math = new \IPLib\Service\UnsignedIntegerMath();
+        $nums = array();
+        $maxChunkIndex = count($matches) - 1;
+        for ($i = 1; $i <= $maxChunkIndex; $i++) {
+            $numBytes = $i === $maxChunkIndex ? 5 - $i : 1;
+            $chunkBytes = $math->getBytes($matches[$i], $numBytes, $onlyDecimal);
+            if ($chunkBytes === null) {
+                return null;
+            }
+            $nums = array_merge($nums, $chunkBytes);
         }
 
         return new static(implode('.', $nums));
@@ -136,7 +183,7 @@ class IPv4 implements AddressInterface
     /**
      * Parse an array of bytes and returns an IPv4 instance if the array is valid, or null otherwise.
      *
-     * @param int[]|array $bytes
+     * @param array<int|mixed> $bytes
      *
      * @return static|null
      */
@@ -179,6 +226,8 @@ class IPv4 implements AddressInterface
      *
      * @return string
      *
+     * @since 1.10.0
+     *
      * @example if $long == false: if the decimal representation is '0.7.8.255': '0.7.010.0377'
      * @example if $long == true: if the decimal representation is '0.7.8.255': '0000.0007.0010.0377'
      */
@@ -202,6 +251,8 @@ class IPv4 implements AddressInterface
      * @param bool $long
      *
      * @return string
+     *
+     * @since 1.10.0
      *
      * @example if $long == false: if the decimal representation is '0.9.10.255': '0.9.0xa.0xff'
      * @example if $long == true: if the decimal representation is '0.9.10.255': '0x00.0x09.0x0a.0xff'
@@ -318,10 +369,14 @@ class IPv4 implements AddressInterface
                 $exceptions = array();
                 if (isset($data[1])) {
                     foreach ($data[1] as $exceptionRange => $exceptionType) {
-                        $exceptions[] = new AssignedRange(Subnet::fromString($exceptionRange), $exceptionType);
+                        $subnet = Subnet::parseString($exceptionRange);
+                        /** @var Subnet $subnet */
+                        $exceptions[] = new AssignedRange($subnet, $exceptionType);
                     }
                 }
-                $reservedRanges[] = new AssignedRange(Subnet::fromString($range), $data[0], $exceptions);
+                $subnet = Subnet::parseString($range);
+                /** @var Subnet $subnet */
+                $reservedRanges[] = new AssignedRange($subnet, $data[0], $exceptions);
             }
             self::$reservedRanges = $reservedRanges;
         }
@@ -358,18 +413,25 @@ class IPv4 implements AddressInterface
     public function toIPv6()
     {
         $myBytes = $this->getBytes();
+        $ipv6 = IPv6::parseString('2002:' . sprintf('%02x', $myBytes[0]) . sprintf('%02x', $myBytes[1]) . ':' . sprintf('%02x', $myBytes[2]) . sprintf('%02x', $myBytes[3]) . '::');
+        /** @var IPv6 $ipv6 */
 
-        return IPv6::fromString('2002:' . sprintf('%02x', $myBytes[0]) . sprintf('%02x', $myBytes[1]) . ':' . sprintf('%02x', $myBytes[2]) . sprintf('%02x', $myBytes[3]) . '::');
+        return $ipv6;
     }
 
     /**
      * Create an IPv6 representation of this address (in IPv6 IPv4-mapped notation).
      *
      * @return \IPLib\Address\IPv6
+     *
+     * @since 1.11.0
      */
     public function toIPv6IPv4Mapped()
     {
-        return IPv6::fromBytes(array_merge(array(0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff), $this->getBytes()));
+        $ipv6 = IPv6::fromBytes(array_merge(array(0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff), $this->getBytes()));
+        /** @var IPv6 $ipv6 */
+
+        return $ipv6;
     }
 
     /**
@@ -403,26 +465,38 @@ class IPv4 implements AddressInterface
     /**
      * {@inheritdoc}
      *
+     * @see \IPLib\Address\AddressInterface::getAddressAtOffset()
+     */
+    public function getAddressAtOffset($n)
+    {
+        if (is_int($n)) {
+            $thatChunks = NumberInChunks::fromInteger($n, NumberInChunks::CHUNKSIZE_BYTES);
+        } elseif (($s = BinaryMath::getInstance()->normalizeIntegerString($n)) !== '') {
+            $thatChunks = NumberInChunks::fromNumericString($s, NumberInChunks::CHUNKSIZE_BYTES);
+        } else {
+            return null;
+        }
+        $myBytes = $this->getBytes();
+        while (isset($myBytes[1]) && $myBytes[0] === 0) {
+            array_shift($myBytes);
+        }
+        $myChunks = new NumberInChunks(false, $myBytes, NumberInChunks::CHUNKSIZE_BYTES);
+        $result = $myChunks->add($thatChunks);
+        if ($result->negative || count($result->chunks) > 4) {
+            return null;
+        }
+
+        return static::fromBytes(array_pad($result->chunks, -4, 0));
+    }
+
+    /**
+     * {@inheritdoc}
+     *
      * @see \IPLib\Address\AddressInterface::getNextAddress()
      */
     public function getNextAddress()
     {
-        $overflow = false;
-        $bytes = $this->getBytes();
-        for ($i = count($bytes) - 1; $i >= 0; $i--) {
-            if ($bytes[$i] === 255) {
-                if ($i === 0) {
-                    $overflow = true;
-                    break;
-                }
-                $bytes[$i] = 0;
-            } else {
-                $bytes[$i]++;
-                break;
-            }
-        }
-
-        return $overflow ? null : static::fromBytes($bytes);
+        return $this->getAddressAtOffset(1);
     }
 
     /**
@@ -432,22 +506,7 @@ class IPv4 implements AddressInterface
      */
     public function getPreviousAddress()
     {
-        $overflow = false;
-        $bytes = $this->getBytes();
-        for ($i = count($bytes) - 1; $i >= 0; $i--) {
-            if ($bytes[$i] === 0) {
-                if ($i === 0) {
-                    $overflow = true;
-                    break;
-                }
-                $bytes[$i] = 255;
-            } else {
-                $bytes[$i]--;
-                break;
-            }
-        }
-
-        return $overflow ? null : static::fromBytes($bytes);
+        return $this->getAddressAtOffset(-1);
     }
 
     /**
@@ -461,5 +520,63 @@ class IPv4 implements AddressInterface
             '.',
             array_reverse($this->getBytes())
         ) . '.in-addr.arpa';
+    }
+
+    /**
+     * {@inheritdoc}
+     *
+     * @see \IPLib\Address\AddressInterface::shift()
+     */
+    public function shift($bits)
+    {
+        $bits = (int) $bits;
+        if ($bits === 0) {
+            return $this;
+        }
+        $absBits = abs($bits);
+        if ($absBits >= 32) {
+            return new static('0.0.0.0');
+        }
+        $pad = str_repeat('0', $absBits);
+        $paddedBits = $this->getBits();
+        if ($bits > 0) {
+            $paddedBits = $pad . substr($paddedBits, 0, -$bits);
+        } else {
+            $paddedBits = substr($paddedBits, $absBits) . $pad;
+        }
+        $bytes = array_map('bindec', str_split($paddedBits, 8));
+
+        return new static(implode('.', $bytes));
+    }
+
+    /**
+     * {@inheritdoc}
+     *
+     * @see \IPLib\Address\AddressInterface::add()
+     */
+    public function add(AddressInterface $other)
+    {
+        if (!$other instanceof self) {
+            return null;
+        }
+        $myBytes = $this->getBytes();
+        $otherBytes = $other->getBytes();
+        $sum = array_fill(0, 4, 0);
+        $carry = 0;
+        for ($index = 3; $index >= 0; $index--) {
+            $byte = $myBytes[$index] + $otherBytes[$index] + $carry;
+            if ($byte > 0xFF) {
+                $carry = $byte >> 8;
+                $byte &= 0xFF;
+            } else {
+                $carry = 0;
+            }
+            $sum[$index] = $byte;
+        }
+        if ($carry !== 0) {
+            return null;
+        }
+
+        return new static(implode('.', $sum));
     }
 }

@@ -1,4 +1,4 @@
-<?php
+<?php declare(strict_types=1);
 /**
  * PrivateBin
  *
@@ -7,13 +7,12 @@
  * @link      https://github.com/PrivateBin/PrivateBin
  * @copyright 2012 Sébastien SAUVAGE (sebsauvage.net)
  * @license   https://www.opensource.org/licenses/zlib-license.php The zlib/libpng License
- * @version   1.3.5
  */
 
 namespace PrivateBin;
 
 use Exception;
-use PDO;
+use PrivateBin\Exception\TranslatedException;
 
 /**
  * Configuration
@@ -27,42 +26,49 @@ class Configuration
      *
      * @var array
      */
-    private $_configuration;
+    protected $_configuration;
 
     /**
      * default configuration
      *
      * @var array
      */
-    private static $_defaults = array(
-        'main' => array(
-            'name'                     => 'PrivateBin',
-            'basepath'                 => '',
-            'discussion'               => true,
-            'opendiscussion'           => false,
-            'password'                 => true,
-            'fileupload'               => false,
-            'burnafterreadingselected' => false,
-            'defaultformatter'         => 'plaintext',
-            'syntaxhighlightingtheme'  => null,
-            'sizelimit'                => 10485760,
-            'template'                 => 'bootstrap',
+    private static $_defaults = [
+        'main' => [
+            'name'                                  => 'PrivateBin',
+            'basepath'                              => '',
+            'discussion'                            => true,
+            'opendiscussion'                        => false,
+            'discussiondatedisplay'                 => true,
+            'discussionrequireauthenticatedids'     => false,
+            'password'                              => true,
+            'fileupload'                            => false,
+            'burnafterreadingselected'              => false,
+            'defaultformatter'                      => 'plaintext',
+            'syntaxhighlightingtheme'               => '',
+            'sizelimit'                             => 10485760,
+            'templateselection'                     => false,
+            'template'                              => 'bootstrap5',
+            'availabletemplates'                    => [
+                'bootstrap5',
+            ],
             'info'                     => 'More information on the <a href=\'https://privatebin.info/\'>project page</a>.',
             'notice'                   => '',
             'languageselection'        => false,
             'languagedefault'          => '',
             'urlshortener'             => '',
+            'shortenbydefault'         => false,
             'qrcode'                   => true,
-            'icon'                     => 'identicon',
-            'cspheader'                => 'default-src \'none\'; base-uri \'self\'; form-action \'none\'; manifest-src \'self\'; connect-src * blob:; script-src \'self\' \'unsafe-eval\' resource:; style-src \'self\'; font-src \'self\'; img-src \'self\' data: blob:; media-src blob:; object-src blob:; sandbox allow-same-origin allow-scripts allow-forms allow-popups allow-modals allow-downloads',
-            'zerobincompatibility'     => false,
+            'email'                    => true,
+            'icon'                     => 'jdenticon',
+            'cspheader'                => 'default-src \'none\'; base-uri \'self\'; form-action \'none\'; manifest-src \'self\'; connect-src * blob:; script-src \'self\' \'wasm-unsafe-eval\'; style-src \'self\'; font-src \'self\'; frame-ancestors \'none\'; frame-src blob:; img-src \'self\' data: blob:; media-src blob:; object-src blob:; sandbox allow-same-origin allow-scripts allow-forms allow-modals allow-downloads',
             'httpwarning'              => true,
             'compression'              => 'zlib',
-        ),
-        'expire' => array(
+        ],
+        'expire' => [
             'default' => '1week',
-        ),
-        'expire_options' => array(
+        ],
+        'expire_options' => [
             '5min'   => 300,
             '10min'  => 600,
             '1hour'  => 3600,
@@ -71,53 +77,88 @@ class Configuration
             '1month' => 2592000,
             '1year'  => 31536000,
             'never'  => 0,
-        ),
-        'formatter_options' => array(
+        ],
+        'formatter_options' => [
             'plaintext'          => 'Plain Text',
             'syntaxhighlighting' => 'Source Code',
             'markdown'           => 'Markdown',
-        ),
-        'traffic' => array(
-            'limit'      => 10,
-            'header'     => null,
-            'exemptedIp' => null,
-        ),
-        'purge' => array(
+        ],
+        'traffic' => [
+            'limit'     => 10,
+            'header'    => '',
+            'exempted'  => '',
+            'creators'  => '',
+        ],
+        'purge' => [
             'limit'     => 300,
             'batchsize' => 10,
-        ),
-        'model' => array(
+        ],
+        'model' => [
             'class' => 'Filesystem',
-        ),
-        'model_options' => array(
+        ],
+        'model_options' => [
             'dir' => 'data',
-        ),
-    );
+        ],
+        'yourls' => [
+            'signature' => '',
+            'apiurl'    => '',
+        ],
+        'shlink' => [
+            'apikey'    => '',
+            'apiurl'    => '',
+        ],
+        'chhoto' => [
+            'apikey'    => '',
+            'apiurl'    => '',
+        ],
+        // update this array when adding/changing/removing js files
+        'sri' => [
+            'js/base-x-5.0.1.js'     => 'sha512-FmhlnjIxQyxkkxQmzf0l6IRGsGbgyCdgqPxypFsEtHMF1naRqaLLo6mcyN5rEaT16nKx1PeJ4g7+07D6gnk/Tg==',
+            'js/bootstrap-5.3.8.js'  => 'sha512-BkZvJ5rZ3zbDCod5seWHpRGg+PRd6ZgE8Nua/OMtcxqm8Wtg0PqwhUUXK5bqvl3oclMt5O+3zjRVX0L+L2j7fA==',
+            'js/dark-mode-switch.js' => 'sha512-BhY7dNU14aDN5L+muoUmA66x0CkYUWkQT0nxhKBLP/o2d7jE025+dvWJa4OiYffBGEFgmhrD/Sp+QMkxGMTz2g==',
+            'js/kjua-0.10.0.js'      => 'sha512-BYj4xggowR7QD150VLSTRlzH62YPfhpIM+b/1EUEr7RQpdWAGKulxWnOvjFx1FUlba4m6ihpNYuQab51H6XlYg==',
+            'js/legacy.js'           => 'sha512-pRofxsrf5UItjiP22Dcjh3FAcBjF/n7h8U9/W5xqJk17U0N2U1oajhXypq/omo9jhwS1iVGOhWrRepoPeFns+w==',
+            'js/prettify.js'         => 'sha512-puO0Ogy++IoA2Pb9IjSxV1n4+kQkKXYAEUtVzfZpQepyDPyXk8hokiYDS7ybMogYlyyEIwMLpZqVhCkARQWLMg==',
+            'js/privatebin.js'       => 'sha512-3OpAPsku1J5vyuedDhIC9o4EKc26NsML2EaVuX/0C9LknU5oG8JYuluK2pgdIqq/A3geYKuP6gRtZoayGS+yKQ==',
+            'js/purify-3.4.17.js'    => 'sha512-udF2zPdEyVCAxIGeBbeSGFK1Fj5c4eHGi6NqOSsr8M75lGs39POzgUNxO3SFxOg4cHfAoZJgR2EaXdmDi6v6AQ==',
+            'js/showdown-2.1.0.js'   => 'sha512-WYXZgkTR0u/Y9SVIA4nTTOih0kXMEd8RRV6MLFdL6YU8ymhR528NLlYQt1nlJQbYz4EW+ZsS0fx1awhiQJme1Q==',
+            'js/zlib-1.3.2.js'       => 'sha512-RAhJgxg9siMIA8ky4c10Rc2zUgnK80olHB8Tt1IOYWY4Eh1WmrviQkDn+sgBlb38ZHq3tzufGC41kP360gmosQ==',
+            'js/zlib.js'             => 'sha512-QOaEwssHqHRRcWJ2Un3Kl2Zhyprzl7T8zmsKN2FppFxW3VR+8UChYOx2iuL0HbXK42fuBWJm5PNQJxufulrt/w==',
+        ],
+    ];
 
     /**
      * parse configuration file and ensure default configuration values are present
      *
-     * @throws Exception
+     * @throws TranslatedException
      */
     public function __construct()
     {
-        $config     = array();
-        $basePath   = (getenv('CONFIG_PATH') !== false ? getenv('CONFIG_PATH') : PATH . 'cfg') . DIRECTORY_SEPARATOR;
-        $configFile = $basePath . 'conf.php';
-
-        if (is_readable($configFile)) {
-            $config = parse_ini_file($configFile, true);
-            foreach (array('main', 'model', 'model_options') as $section) {
-                if (!array_key_exists($section, $config)) {
-                    throw new Exception(I18n::_('PrivateBin requires configuration section [%s] to be present in configuration file.', $section), 2);
+        $basePaths = [];
+        $config = [];
+        $configPath = getenv('CONFIG_PATH');
+        if ($configPath !== false && !empty($configPath)) {
+            $basePaths[] = $configPath;
+        }
+        $basePaths[] = PATH . 'cfg';
+        foreach ($basePaths as $basePath) {
+            $configFile = $basePath . DIRECTORY_SEPARATOR . 'conf.php';
+            if (is_readable($configFile)) {
+                $config = parse_ini_file($configFile, true);
+                foreach (['main', 'model', 'model_options'] as $section) {
+                    if (!array_key_exists($section, $config)) {
+                        $name = $config['main']['name'] ?? self::getDefaults()['main']['name'];
+                        throw new TranslatedException(['%s requires configuration section [%s] to be present in configuration file.', I18n::_($name), $section], 2);
+                    }
                 }
+                break;
             }
         }
 
         $opts = '_options';
         foreach (self::getDefaults() as $section => $values) {
             // fill missing sections with default values
-            if (!array_key_exists($section, $config) || count($config[$section]) == 0) {
+            if (!array_key_exists($section, $config) || count($config[$section]) === 0) {
                 $this->_configuration[$section] = $values;
                 if (array_key_exists('dir', $this->_configuration[$section])) {
                     $this->_configuration[$section]['dir'] = PATH . $this->_configuration[$section]['dir'];
@@ -126,28 +167,39 @@ class Configuration
             }
             // provide different defaults for database model
             elseif (
-                $section == 'model_options' && in_array(
-                    $this->_configuration['model']['class'],
-                    array('Database', 'privatebin_db', 'zerobin_db')
-                )
+                $section === 'model_options' &&
+                $this->_configuration['model']['class'] === 'Database'
             ) {
-                $values = array(
+                $values = [
                     'dsn' => 'sqlite:' . PATH . 'data' . DIRECTORY_SEPARATOR . 'db.sq3',
                     'tbl' => null,
                     'usr' => null,
                     'pwd' => null,
-                    'opt' => array(PDO::ATTR_PERSISTENT => true),
-                );
+                    'opt' => [],
+                ];
             } elseif (
-                $section == 'model_options' && in_array(
-                    $this->_configuration['model']['class'],
-                    array('GoogleCloudStorage')
-                )
+                $section === 'model_options' &&
+                $this->_configuration['model']['class'] === 'GoogleCloudStorage'
             ) {
-                $values = array(
-                    'bucket' => getenv('PRIVATEBIN_GCS_BUCKET') ? getenv('PRIVATEBIN_GCS_BUCKET') : null,
-                    'prefix' => 'pastes',
-                );
+                $values = [
+                    'bucket'     => getenv('PRIVATEBIN_GCS_BUCKET') ? getenv('PRIVATEBIN_GCS_BUCKET') : null,
+                    'prefix'     => 'pastes',
+                    'uniformacl' => false,
+                ];
+            } elseif (
+                $section === 'model_options' &&
+                $this->_configuration['model']['class'] === 'S3Storage'
+            ) {
+                $values = [
+                    'region'                  => null,
+                    'version'                 => null,
+                    'endpoint'                => null,
+                    'accesskey'               => null,
+                    'secretkey'               => null,
+                    'use_path_style_endpoint' => null,
+                    'bucket'                  => null,
+                    'prefix'                  => '',
+                ];
             }
 
             // "*_options" sections don't require all defaults to be set
@@ -163,8 +215,12 @@ class Configuration
             }
             // check for missing keys and set defaults if necessary
             else {
+                // preserve configured SRI hashes
+                if ($section === 'sri' && array_key_exists($section, $config)) {
+                    $this->_configuration[$section] = $config[$section];
+                }
                 foreach ($values as $key => $val) {
-                    if ($key == 'dir') {
+                    if ($key === 'dir') {
                         $val = PATH . $val;
                     }
                     $result = $val;
@@ -173,9 +229,9 @@ class Configuration
                             $result = $config[$section][$key];
                         } elseif (is_bool($val)) {
                             $val = strtolower($config[$section][$key]);
-                            if (in_array($val, array('true', 'yes', 'on'))) {
+                            if (in_array($val, ['true', 'yes', 'on'])) {
                                 $result = true;
-                            } elseif (in_array($val, array('false', 'no', 'off'))) {
+                            } elseif (in_array($val, ['false', 'no', 'off'])) {
                                 $result = false;
                             } else {
                                 $result = (bool) $config[$section][$key];
@@ -184,6 +240,8 @@ class Configuration
                             $result = (int) $config[$section][$key];
                         } elseif (is_string($val) && !empty($config[$section][$key])) {
                             $result = (string) $config[$section][$key];
+                        } elseif (is_array($val) && is_array($config[$section][$key])) {
+                            $result = $config[$section][$key];
                         }
                     }
                     $this->_configuration[$section][$key] = $result;
@@ -191,21 +249,17 @@ class Configuration
             }
         }
 
-        // support for old config file format, before the fork was renamed and PSR-4 introduced
-        $this->_configuration['model']['class'] = str_replace(
-            'zerobin_', 'privatebin_',
-            $this->_configuration['model']['class']
-        );
-
-        $this->_configuration['model']['class'] = str_replace(
-            array('privatebin_data', 'privatebin_db'),
-            array('Filesystem', 'Database'),
-            $this->_configuration['model']['class']
-        );
-
         // ensure a valid expire default key is set
         if (!array_key_exists($this->_configuration['expire']['default'], $this->_configuration['expire_options'])) {
             $this->_configuration['expire']['default'] = key($this->_configuration['expire_options']);
+        }
+
+        // ensure the basepath ends in a slash, if one is set
+        if (
+            !empty($this->_configuration['main']['basepath']) &&
+            substr_compare($this->_configuration['main']['basepath'], '/', -1) !== 0
+        ) {
+            $this->_configuration['main']['basepath'] .= '/';
         }
     }
 
@@ -250,13 +304,13 @@ class Configuration
      * get a section from the configuration, must exist
      *
      * @param string $section
-     * @throws Exception
+     * @throws TranslatedException
      * @return mixed
      */
     public function getSection($section)
     {
         if (!array_key_exists($section, $this->_configuration)) {
-            throw new Exception(I18n::_('%s requires configuration section [%s] to be present in configuration file.', I18n::_($this->getKey('name')), $section), 3);
+            throw new TranslatedException(['%s requires configuration section [%s] to be present in configuration file.', I18n::_($this->getKey('name')), $section], 3);
         }
         return $this->_configuration[$section];
     }

@@ -4,7 +4,7 @@ namespace IPLib;
 
 use IPLib\Address\AddressInterface;
 use IPLib\Range\Subnet;
-use IPLib\Service\RangesFromBounradyCalculator;
+use IPLib\Service\RangesFromBoundaryCalculator;
 
 /**
  * Factory methods to build class instances.
@@ -12,105 +12,239 @@ use IPLib\Service\RangesFromBounradyCalculator;
 class Factory
 {
     /**
-     * Parse an IP address string.
+     * @deprecated since 1.17.0: use the parseAddressString() method instead.
+     * For upgrading:
+     * - if $mayIncludePort is true, use the ParseStringFlag::MAY_INCLUDE_PORT flag
+     * - if $mayIncludeZoneID is true, use the ParseStringFlag::MAY_INCLUDE_ZONEID flag
+     * - if $supportNonDecimalIPv4 is true, use the ParseStringFlag::IPV4_MAYBE_NON_DECIMAL flag
      *
-     * @param string $address the address to parse
-     * @param bool $mayIncludePort set to false to avoid parsing addresses with ports
-     * @param bool $mayIncludeZoneID set to false to avoid parsing IPv6 addresses with zone IDs (see RFC 4007)
-     * @param bool $supportNonDecimalIPv4 set to true to support parsing non decimal (that is, octal and hexadecimal) IPv4 addresses
+     * @param string|mixed $address
+     * @param bool $mayIncludePort
+     * @param bool $mayIncludeZoneID
+     * @param bool $supportNonDecimalIPv4
      *
      * @return \IPLib\Address\AddressInterface|null
+     *
+     * @see \IPLib\Factory::parseAddressString()
+     * @since 1.1.0 added the $mayIncludePort argument
+     * @since 1.3.0 added the $mayIncludeZoneID argument
+     * @since 1.10.0 added the $supportNonDecimalIPv4 argument
      */
     public static function addressFromString($address, $mayIncludePort = true, $mayIncludeZoneID = true, $supportNonDecimalIPv4 = false)
     {
-        $result = null;
-        if ($result === null) {
-            $result = Address\IPv4::fromString($address, $mayIncludePort, $supportNonDecimalIPv4);
+        return static::parseAddressString($address, 0 + ($mayIncludePort ? ParseStringFlag::MAY_INCLUDE_PORT : 0) + ($mayIncludeZoneID ? ParseStringFlag::MAY_INCLUDE_ZONEID : 0) + ($supportNonDecimalIPv4 ? ParseStringFlag::IPV4_MAYBE_NON_DECIMAL : 0));
+    }
+
+    /**
+     * Parse an IP address string.
+     *
+     * @param string|mixed $address the address to parse
+     * @param int $flags A combination or zero or more flags
+     *
+     * @return \IPLib\Address\AddressInterface|null
+     *
+     * @see \IPLib\ParseStringFlag
+     * @since 1.17.0
+     */
+    public static function parseAddressString($address, $flags = 0)
+    {
+        if (($result = Address\IPv4::parseString($address, $flags)) !== null) {
+            return $result;
         }
-        if ($result === null) {
-            $result = Address\IPv6::fromString($address, $mayIncludePort, $mayIncludeZoneID);
+        if (($result = Address\IPv6::parseString($address, $flags)) !== null) {
+            return $result;
         }
 
-        return $result;
+        return null;
     }
 
     /**
      * Convert a byte array to an address instance.
      *
-     * @param int[]|array $bytes
+     * @param array<int|mixed> $bytes
      *
      * @return \IPLib\Address\AddressInterface|null
      */
     public static function addressFromBytes(array $bytes)
     {
-        $result = null;
-        if ($result === null) {
-            $result = Address\IPv4::fromBytes($bytes);
+        if (($result = Address\IPv4::fromBytes($bytes)) !== null) {
+            return $result;
         }
-        if ($result === null) {
-            $result = Address\IPv6::fromBytes($bytes);
+        if (($result = Address\IPv6::fromBytes($bytes)) !== null) {
+            return $result;
         }
 
-        return $result;
+        return null;
+    }
+
+    /**
+     * @deprecated since 1.17.0: use the parseRangeString() method instead.
+     * For upgrading:
+     * - if $supportNonDecimalIPv4 is true, use the ParseStringFlag::IPV4_MAYBE_NON_DECIMAL flag
+     *
+     * @param string|mixed $range
+     * @param bool $supportNonDecimalIPv4
+     *
+     * @return \IPLib\Range\RangeInterface|null
+     *
+     * @see \IPLib\Factory::parseRangeString()
+     * @since 1.10.0 added the $supportNonDecimalIPv4 argument
+     */
+    public static function rangeFromString($range, $supportNonDecimalIPv4 = false)
+    {
+        return static::parseRangeString($range, $supportNonDecimalIPv4 ? ParseStringFlag::IPV4_MAYBE_NON_DECIMAL : 0);
     }
 
     /**
      * Parse an IP range string.
      *
-     * @param string $range
-     * @param bool $supportNonDecimalIPv4 set to true to support parsing non decimal (that is, octal and hexadecimal) IPv4 addresses
+     * @param string|mixed $range
+     * @param int $flags A combination or zero or more flags
      *
      * @return \IPLib\Range\RangeInterface|null
+     *
+     * @see \IPLib\ParseStringFlag
+     * @since 1.17.0
      */
-    public static function rangeFromString($range, $supportNonDecimalIPv4 = false)
+    public static function parseRangeString($range, $flags = 0)
     {
-        $result = null;
+        $result = Range\Subnet::parseString($range, $flags);
         if ($result === null) {
-            $result = Range\Subnet::fromString($range, $supportNonDecimalIPv4);
+            $result = Range\Pattern::parseString($range, $flags);
         }
         if ($result === null) {
-            $result = Range\Pattern::fromString($range, $supportNonDecimalIPv4);
-        }
-        if ($result === null) {
-            $result = Range\Single::fromString($range, $supportNonDecimalIPv4);
+            $result = Range\Single::parseString($range, $flags);
         }
 
         return $result;
     }
 
     /**
-     * Create the smallest address range that comprises two addresses.
+     * @deprecated since 1.17.0: use the getRangeFromBoundaries() method instead.
+     * For upgrading:
+     * - if $supportNonDecimalIPv4 is true, use the ParseStringFlag::IPV4_MAYBE_NON_DECIMAL flag
      *
-     * @param string|\IPLib\Address\AddressInterface $from
-     * @param string|\IPLib\Address\AddressInterface $to
-     * @param bool $supportNonDecimalIPv4 set to true to support parsing non decimal (that is, octal and hexadecimal) IPv4 addresses
+     * @param string|\IPLib\Address\AddressInterface|mixed $from
+     * @param string|\IPLib\Address\AddressInterface|mixed $to
+     * @param bool $supportNonDecimalIPv4
      *
-     * @return \IPLib\Range\RangeInterface|null return NULL if $from and/or $to are invalid addresses, or if both are NULL or empty strings, or if they are addresses of different types
+     * @return \IPLib\Range\RangeInterface|null
+     *
+     * @see \IPLib\Factory::getRangeFromBoundaries()
+     * @since 1.2.0
+     * @since 1.10.0 added the $supportNonDecimalIPv4 argument
      */
     public static function rangeFromBoundaries($from, $to, $supportNonDecimalIPv4 = false)
     {
-        list($from, $to) = self::parseBoundaries($from, $to, $supportNonDecimalIPv4);
+        return static::getRangeFromBoundaries($from, $to, ParseStringFlag::MAY_INCLUDE_PORT | ParseStringFlag::MAY_INCLUDE_ZONEID | ($supportNonDecimalIPv4 ? ParseStringFlag::IPV4_MAYBE_NON_DECIMAL : 0));
+    }
+
+    /**
+     * Create the smallest address range that comprises two addresses.
+     *
+     * @param string|\IPLib\Address\AddressInterface|mixed $from
+     * @param string|\IPLib\Address\AddressInterface|mixed $to
+     * @param int $flags A combination or zero or more flags
+     *
+     * @return \IPLib\Range\RangeInterface|null return NULL if $from and/or $to are invalid addresses, or if both are NULL or empty strings, or if they are addresses of different types
+     *
+     * @see \IPLib\ParseStringFlag
+     * @since 1.17.0
+     */
+    public static function getRangeFromBoundaries($from, $to, $flags = 0)
+    {
+        list($from, $to) = self::parseBoundaries($from, $to, $flags);
 
         return $from === false || $to === false ? null : static::rangeFromBoundaryAddresses($from, $to);
     }
 
     /**
-     * Create a list of Range instances that exactly describes all the addresses between the two provided addresses.
+     * Calculate the minimal range that contains all the specified addresses.
      *
-     * @param string|\IPLib\Address\AddressInterface $from
-     * @param string|\IPLib\Address\AddressInterface $to
-     * @param bool $supportNonDecimalIPv4 set to true to support parsing non decimal (that is, octal and hexadecimal) IPv4 addresses
+     * @param array<non-empty-string|\IPLib\Address\AddressInterface|mixed> $addresses
+     * @param int $flags
      *
-     * @return \IPLib\Range\Subnet[]|null return NULL if $from and/or $to are invalid addresses, or if both are NULL or empty strings, or if they are addresses of different types
+     * @return \IPLib\Range\RangeInterface|null Returns NULL if $addresses is empty, if it contains invalid addresses, or if the addresses aren't compatible (for example, both IPv4 and IPv6 addresses)
+     *
+     * @since 1.22.0
+     */
+    public static function getRangeFromAddresses(array $addresses, $flags = 0)
+    {
+        $min = null;
+        $max = null;
+        $numberOfBits = null;
+        foreach ($addresses as $address) {
+            if (!$address instanceof AddressInterface) {
+                $address = Factory::parseAddressString($address, $flags);
+                if ($address === null) {
+                    return null;
+                }
+            }
+            if ($numberOfBits === null) {
+                $min = $address;
+                $max = $address;
+                $numberOfBits = $address->getNumberOfBits();
+            } elseif ($numberOfBits !== $address->getNumberOfBits()) {
+                return null;
+            } else {
+                /** @var AddressInterface $min */
+                /** @var AddressInterface $max */
+                $comparable = $address->getComparableString();
+                if ($min->getComparableString() > $comparable) {
+                    $min = $address;
+                }
+                if ($max->getComparableString() < $comparable) {
+                    $max = $address;
+                }
+            }
+        }
+        if ($numberOfBits === null) {
+            return null;
+        }
+
+        return static::rangeFromBoundaryAddresses($min, $max);
+    }
+
+    /**
+     * @deprecated since 1.17.0: use the getRangesFromBoundaries() method instead.
+     * For upgrading:
+     * - if $supportNonDecimalIPv4 is true, use the ParseStringFlag::IPV4_MAYBE_NON_DECIMAL flag
+     *
+     * @param string|\IPLib\Address\AddressInterface|mixed $from
+     * @param string|\IPLib\Address\AddressInterface|mixed $to
+     * @param bool $supportNonDecimalIPv4
+     *
+     * @return \IPLib\Range\Subnet[]|null
+     *
+     * @see \IPLib\Factory::getRangesFromBoundaries()
+     * @since 1.14.0
      */
     public static function rangesFromBoundaries($from, $to, $supportNonDecimalIPv4 = false)
     {
-        list($from, $to) = self::parseBoundaries($from, $to, $supportNonDecimalIPv4);
-        if (($from === false || $to === false) || ($from === null && $to === null)) {
+        return static::getRangesFromBoundaries($from, $to, ParseStringFlag::MAY_INCLUDE_PORT | ParseStringFlag::MAY_INCLUDE_ZONEID | ($supportNonDecimalIPv4 ? ParseStringFlag::IPV4_MAYBE_NON_DECIMAL : 0));
+    }
+
+    /**
+     * Create a list of Range instances that exactly describes all the addresses between the two provided addresses.
+     *
+     * @param string|\IPLib\Address\AddressInterface|mixed $from
+     * @param string|\IPLib\Address\AddressInterface|mixed $to
+     * @param int $flags A combination or zero or more flags
+     *
+     * @return \IPLib\Range\Subnet[]|null return NULL if $from and/or $to are invalid addresses, or if both are NULL or empty strings, or if they are addresses of different types
+     *
+     * @see \IPLib\ParseStringFlag
+     * @since 1.17.0
+     */
+    public static function getRangesFromBoundaries($from, $to, $flags = 0)
+    {
+        list($from, $to) = self::parseBoundaries($from, $to, $flags);
+        if ($from === false || $to === false || ($from === null && $to === null)) {
             return null;
         }
         if ($from === null || $to === null) {
             $address = $from ? $from : $to;
+            /** @var AddressInterface $address */
 
             return array(new Subnet($address, $address, $address->getNumberOfBits()));
         }
@@ -118,24 +252,26 @@ class Factory
         if ($to->getNumberOfBits() !== $numberOfBits) {
             return null;
         }
-        $calculator = new RangesFromBounradyCalculator($numberOfBits);
+        $calculator = new RangesFromBoundaryCalculator($numberOfBits);
 
         return $calculator->getRanges($from, $to);
     }
 
     /**
-     * @param \IPLib\Address\AddressInterface $from
-     * @param \IPLib\Address\AddressInterface $to
+     * @param \IPLib\Address\AddressInterface|null $from
+     * @param \IPLib\Address\AddressInterface|null $to
      *
      * @return \IPLib\Range\RangeInterface|null
+     *
+     * @since 1.2.0
      */
-    protected static function rangeFromBoundaryAddresses(AddressInterface $from = null, AddressInterface $to = null)
+    protected static function rangeFromBoundaryAddresses($from = null, $to = null)
     {
-        if ($from === null && $to === null) {
+        if (!$from instanceof AddressInterface && !$to instanceof AddressInterface) {
             $result = null;
-        } elseif ($to === null) {
+        } elseif (!$to instanceof AddressInterface) {
             $result = Range\Single::fromAddress($from);
-        } elseif ($from === null) {
+        } elseif (!$from instanceof AddressInterface) {
             $result = Range\Single::fromAddress($to);
         } else {
             $result = null;
@@ -163,7 +299,7 @@ class Factory
                             break;
                         }
                     }
-                    $result = static::rangeFromString($from->toString(true) . '/' . (string) $sameBits);
+                    $result = static::parseRangeString($from->toString() . '/' . (string) $sameBits);
                 }
             }
         }
@@ -172,23 +308,23 @@ class Factory
     }
 
     /**
-     * @param string|\IPLib\Address\AddressInterface $from
-     * @param string|\IPLib\Address\AddressInterface $to
-     * @param bool $supportNonDecimalIPv4
+     * @param string|\IPLib\Address\AddressInterface|mixed $from
+     * @param string|\IPLib\Address\AddressInterface|mixed $to
+     * @param int $flags
      *
-     * @return \IPLib\Address\AddressInterface[]|null[]|false[]
+     * @return array{\IPLib\Address\AddressInterface|false|null, \IPLib\Address\AddressInterface|false|null}
      */
-    private static function parseBoundaries($from, $to, $supportNonDecimalIPv4 = false)
+    private static function parseBoundaries($from, $to, $flags = 0)
     {
         $result = array();
         foreach (array('from', 'to') as $param) {
             $value = $$param;
             if (!($value instanceof AddressInterface)) {
-                $value = (string) $value;
+                $value = is_object($value) && method_exists($value, '__toString') || is_scalar($value) ? (string) $value : '';
                 if ($value === '') {
                     $value = null;
                 } else {
-                    $value = static::addressFromString($value, true, true, $supportNonDecimalIPv4);
+                    $value = static::parseAddressString($value, $flags);
                     if ($value === null) {
                         $value = false;
                     }
@@ -196,6 +332,7 @@ class Factory
             }
             $result[] = $value;
         }
+        /** @var array{\IPLib\Address\AddressInterface|false|null, \IPLib\Address\AddressInterface|false|null} $result */
         if ($result[0] && $result[1] && strcmp($result[0]->getComparableString(), $result[1]->getComparableString()) > 0) {
             $result = array($result[1], $result[0]);
         }

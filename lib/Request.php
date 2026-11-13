@@ -1,4 +1,4 @@
-<?php
+<?php declare(strict_types=1);
 /**
  * PrivateBin
  *
@@ -7,10 +7,13 @@
  * @link      https://github.com/PrivateBin/PrivateBin
  * @copyright 2012 Sébastien SAUVAGE (sebsauvage.net)
  * @license   https://www.opensource.org/licenses/zlib-license.php The zlib/libpng License
- * @version   1.3.5
  */
 
 namespace PrivateBin;
+
+use JsonException;
+use PrivateBin\Exception\TranslatedException;
+use PrivateBin\Model\Paste;
 
 /**
  * Request
@@ -41,6 +44,14 @@ class Request
     const MIME_XHTML = 'application/xhtml+xml';
 
     /**
+     * Input stream length for size checks
+     *
+     * @access private
+     * @var int
+     */
+    private $_bodyLength = 0;
+
+    /**
      * Input stream to use for PUT parameter parsing
      *
      * @access private
@@ -62,7 +73,7 @@ class Request
      * @access private
      * @var array
      */
-    private $_params = array();
+    private $_params = [];
 
     /**
      * If we are in a JSON API context
@@ -73,20 +84,18 @@ class Request
     private $_isJsonApi = false;
 
     /**
-     * Return the paste ID of the current paste.
+     * Return the paste ID of the current document.
      *
      * @access private
      * @return string
      */
     private function getPasteId()
     {
-        // RegEx to check for valid paste ID (16 base64 chars)
-        $pasteIdRegEx = '/^[a-f0-9]{16}$/';
-
         foreach ($_GET as $key => $value) {
-            // only return if value is empty and key matches RegEx
-            if (($value === '') and preg_match($pasteIdRegEx, $key, $match)) {
-                return $match[0];
+            // only return if value is empty and key is 16 hex chars
+            $key = (string) $key;
+            if (empty($value) && Paste::isValidId($key)) {
+                return $key;
             }
         }
 
@@ -104,22 +113,40 @@ class Request
         $this->_isJsonApi = $this->_detectJsonRequest();
 
         // parse parameters, depending on request type
-        switch (array_key_exists('REQUEST_METHOD', $_SERVER) ? $_SERVER['REQUEST_METHOD'] : 'GET') {
+        switch ($_SERVER['REQUEST_METHOD'] ?? 'GET') {
             case 'DELETE':
             case 'PUT':
             case 'POST':
                 // it might be a creation or a deletion, the latter is detected below
                 $this->_operation = 'create';
-                $this->_params    = Json::decode(
-                    file_get_contents(self::$_inputStream)
-                );
+                try {
+                    $data = file_get_contents(self::$_inputStream);
+                    $this->_bodyLength = strlen($data);
+                    $this->_params = Json::decode($data);
+                    // a valid JSON scalar (number, bool or string) decodes
+                    // without error, but is not a usable set of parameters
+                    if (!is_array($this->_params)) {
+                        $this->_params = [];
+                    }
+                } catch (JsonException $e) {
+                    // ignore error, $this->_params will remain empty
+                }
                 break;
             default:
-                $this->_params = $_GET;
+                $this->_params = filter_var_array($_GET, [
+                    'deletetoken'      => FILTER_SANITIZE_SPECIAL_CHARS,
+                    'jsonld'           => FILTER_SANITIZE_SPECIAL_CHARS,
+                    'link'             => FILTER_SANITIZE_URL,
+                    'pasteid'          => FILTER_SANITIZE_SPECIAL_CHARS,
+                    'shortenviayourls' => FILTER_SANITIZE_SPECIAL_CHARS,
+                    'shortenviashlink' => FILTER_SANITIZE_SPECIAL_CHARS,
+                    'shortenviachhoto' => FILTER_SANITIZE_SPECIAL_CHARS,
+                ], false);
         }
         if (
             !array_key_exists('pasteid', $this->_params) &&
             !array_key_exists('jsonld', $this->_params) &&
+            !array_key_exists('link', $this->_params) &&
             array_key_exists('QUERY_STRING', $_SERVER) &&
             !empty($_SERVER['QUERY_STRING'])
         ) {
@@ -127,14 +154,40 @@ class Request
         }
 
         // prepare operation, depending on current parameters
-        if (array_key_exists('pasteid', $this->_params) && !empty($this->_params['pasteid'])) {
-            if (array_key_exists('deletetoken', $this->_params) && !empty($this->_params['deletetoken'])) {
+        if (
+            array_key_exists('pasteid', $this->_params) &&
+            is_string($this->_params['pasteid']) &&
+            !empty($this->_params['pasteid'])
+        ) {
+            if (
+                array_key_exists('deletetoken', $this->_params) &&
+                is_string($this->_params['deletetoken']) &&
+                !empty($this->_params['deletetoken'])
+            ) {
                 $this->_operation = 'delete';
-            } elseif ($this->_operation != 'create') {
+            } elseif ($this->_operation !== 'create') {
                 $this->_operation = 'read';
             }
-        } elseif (array_key_exists('jsonld', $this->_params) && !empty($this->_params['jsonld'])) {
+        } elseif (
+            array_key_exists('jsonld', $this->_params) &&
+            is_string($this->_params['jsonld']) &&
+            !empty($this->_params['jsonld'])
+        ) {
             $this->_operation = 'jsonld';
+        } elseif (
+            array_key_exists('link', $this->_params) &&
+            is_string($this->_params['link']) &&
+            !empty($this->_params['link'])
+        ) {
+            if (str_contains($this->getRequestUri(), '/shortenviayourls') || array_key_exists('shortenviayourls', $this->_params)) {
+                $this->_operation = 'yourlsproxy';
+            }
+            if (str_contains($this->getRequestUri(), '/shortenviashlink') || array_key_exists('shortenviashlink', $this->_params)) {
+                $this->_operation = 'shlinkproxy';
+            }
+            if (str_contains($this->getRequestUri(), '/shortenviachhoto') || array_key_exists('shortenviachhoto', $this->_params)) {
+                $this->_operation = 'chhotoproxy';
+            }
         }
     }
 
@@ -153,15 +206,24 @@ class Request
      * Get data of paste or comment
      *
      * @access public
+     * @param  int $sizelimit
+     * @throws JsonException
+     * @throws TranslatedException
      * @return array
      */
-    public function getData()
+    public function getData(int $sizelimit)
     {
-        $data = array(
+        if ($this->_bodyLength > $sizelimit) {
+            throw new TranslatedException([
+                'Document is limited to %s of encrypted data.',
+                Filter::formatHumanReadableSize($sizelimit),
+            ]);
+        }
+        $data = [
             'adata' => $this->getParam('adata'),
-        );
-        $required_keys = array('v', 'ct');
-        $meta          = $this->getParam('meta');
+        ];
+        $required_keys = ['v', 'ct'];
+        $meta = $this->getParam('meta');
         if (empty($meta)) {
             $required_keys[] = 'pasteid';
             $required_keys[] = 'parentid';
@@ -169,10 +231,8 @@ class Request
             $data['meta'] = $meta;
         }
         foreach ($required_keys as $key) {
-            $data[$key] = $this->getParam($key, $key == 'v' ? 1 : '');
+            $data[$key] = $this->getParam($key, $key === 'v' ? 1 : '');
         }
-        // forcing a cast to int or float
-        $data['v'] = $data['v'] + 0;
         return $data;
     }
 
@@ -186,8 +246,7 @@ class Request
      */
     public function getParam($param, $default = '')
     {
-        return array_key_exists($param, $this->_params) ?
-            $this->_params[$param] : $default;
+        return $this->_params[$param] ?? $default;
     }
 
     /**
@@ -198,23 +257,21 @@ class Request
      */
     public function getHost()
     {
-        return array_key_exists('HTTP_HOST', $_SERVER) ?
-            htmlspecialchars($_SERVER['HTTP_HOST']) :
-            'localhost';
+        $host = array_key_exists('HTTP_HOST', $_SERVER) ? filter_var($_SERVER['HTTP_HOST'], FILTER_SANITIZE_URL) : '';
+        return empty($host) ? 'localhost' : $host;
     }
 
     /**
-     * Get request URI
+     * Get request URI path without GET parameters
      *
      * @access public
      * @return string
      */
     public function getRequestUri()
     {
-        return array_key_exists('REQUEST_URI', $_SERVER) ?
-        htmlspecialchars(
-            parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH)
-            ) : '/';
+        $uri = array_key_exists('REQUEST_URI', $_SERVER) ? filter_var($_SERVER['REQUEST_URI'], FILTER_SANITIZE_URL) : '';
+        $path = empty($uri) ? '' : parse_url($uri, PHP_URL_PATH);
+        return is_string($path) && $path !== '' ? $path : '/';
     }
 
     /**
@@ -248,26 +305,24 @@ class Request
      */
     private function _detectJsonRequest()
     {
-        $hasAcceptHeader = array_key_exists('HTTP_ACCEPT', $_SERVER);
-        $acceptHeader    = $hasAcceptHeader ? $_SERVER['HTTP_ACCEPT'] : '';
+        $acceptHeader = $_SERVER['HTTP_ACCEPT'] ?? '';
 
         // simple cases
         if (
-            (array_key_exists('HTTP_X_REQUESTED_WITH', $_SERVER) &&
-                $_SERVER['HTTP_X_REQUESTED_WITH'] == 'JSONHttpRequest') ||
-            ($hasAcceptHeader &&
-                strpos($acceptHeader, self::MIME_JSON) !== false &&
-                strpos($acceptHeader, self::MIME_HTML) === false &&
-                strpos($acceptHeader, self::MIME_XHTML) === false)
+            ($_SERVER['HTTP_X_REQUESTED_WITH'] ?? '') === 'JSONHttpRequest' ||
+            (
+                str_contains($acceptHeader, self::MIME_JSON) &&
+                !str_contains($acceptHeader, self::MIME_HTML) &&
+                !str_contains($acceptHeader, self::MIME_XHTML)
+            )
         ) {
             return true;
         }
 
         // advanced case: media type negotiation
-        $mediaTypes = array();
-        if ($hasAcceptHeader) {
-            $mediaTypeRanges = explode(',', trim($acceptHeader));
-            foreach ($mediaTypeRanges as $mediaTypeRange) {
+        if (!empty($acceptHeader)) {
+            $mediaTypes = [];
+            foreach (explode(',', trim($acceptHeader)) as $mediaTypeRange) {
                 if (preg_match(
                     '#(\*/\*|[a-z\-]+/[a-z\-+*]+(?:\s*;\s*[^q]\S*)*)(?:\s*;\s*q\s*=\s*(0(?:\.\d{0,3})|1(?:\.0{0,3})))?#',
                     trim($mediaTypeRange), $match
@@ -276,25 +331,25 @@ class Request
                         $match[2] = '1.0';
                     } else {
                         $match[2] = (string) floatval($match[2]);
+                        if ($match[2] === '0.0') {
+                            continue;
+                        }
                     }
                     if (!isset($mediaTypes[$match[2]])) {
-                        $mediaTypes[$match[2]] = array();
+                        $mediaTypes[$match[2]] = [];
                     }
                     $mediaTypes[$match[2]][] = strtolower($match[1]);
                 }
             }
             krsort($mediaTypes);
             foreach ($mediaTypes as $acceptedQuality => $acceptedValues) {
-                if ($acceptedQuality === '0.0') {
-                    continue;
-                }
                 foreach ($acceptedValues as $acceptedValue) {
                     if (
-                        strpos($acceptedValue, self::MIME_HTML) === 0 ||
-                        strpos($acceptedValue, self::MIME_XHTML) === 0
+                        str_starts_with($acceptedValue, self::MIME_HTML) ||
+                        str_starts_with($acceptedValue, self::MIME_XHTML)
                     ) {
                         return false;
-                    } elseif (strpos($acceptedValue, self::MIME_JSON) === 0) {
+                    } elseif (str_starts_with($acceptedValue, self::MIME_JSON)) {
                         return true;
                     }
                 }

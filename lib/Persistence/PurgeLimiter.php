@@ -1,4 +1,4 @@
-<?php
+<?php declare(strict_types=1);
 /**
  * PrivateBin
  *
@@ -7,7 +7,6 @@
  * @link      https://github.com/PrivateBin/PrivateBin
  * @copyright 2012 Sébastien SAUVAGE (sebsauvage.net)
  * @license   https://www.opensource.org/licenses/zlib-license.php The zlib/libpng License
- * @version   1.3.5
  */
 
 namespace PrivateBin\Persistence;
@@ -68,8 +67,8 @@ class PurgeLimiter extends AbstractPersistence
             return true;
         }
 
-        $now  = time();
-        $pl   = (int) self::$_store->getValue('purge_limiter');
+        $now = time();
+        $pl = (int) self::$_store->getValue('purge_limiter');
         if ($pl + self::$_limit >= $now) {
             return false;
         }

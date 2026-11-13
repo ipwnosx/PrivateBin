@@ -1,35 +1,38 @@
-<?php
+<?php declare(strict_types=1);
 
+use PHPUnit\Framework\TestCase;
 use PrivateBin\I18n;
 use PrivateBin\View;
 
-class ViewTest extends PHPUnit_Framework_TestCase
+class ViewTest extends TestCase
 {
     private static $error = 'foo bar';
 
     private static $status = '!*#@?$+';
 
-    private static $formatters = array(
+    private static $is_deleted = false;
+
+    private static $formatters = [
         'plaintext'          => 'Plain Text',
         'syntaxhighlighting' => 'Source Code',
         'markdown'           => 'Markdown',
-    );
+    ];
 
     private static $formatter_default = 'plaintext';
 
-    private static $expire = array(
+    private static $expire = [
         '5min'  => '5 minutes',
         '1hour' => '1 hour',
         'never' => 'Never',
-    );
+    ];
 
     private static $expire_default = '1hour';
 
     private static $version = 'Version 1.2.3';
 
-    private $_content = array();
+    private $_content = [];
 
-    public function setUp()
+    public function setUp(): void
     {
         /* Setup Routine */
         $page = new View;
@@ -37,6 +40,7 @@ class ViewTest extends PHPUnit_Framework_TestCase
         $page->assign('BASEPATH', '');
         $page->assign('ERROR', self::$error);
         $page->assign('STATUS', self::$status);
+        $page->assign('ISDELETED', self::$is_deleted);
         $page->assign('VERSION', self::$version);
         $page->assign('DISCUSSION', true);
         $page->assign('OPENDISCUSSION', true);
@@ -48,7 +52,6 @@ class ViewTest extends PHPUnit_Framework_TestCase
         $page->assign('BURNAFTERREADINGSELECTED', false);
         $page->assign('PASSWORD', true);
         $page->assign('FILEUPLOAD', false);
-        $page->assign('ZEROBINCOMPATIBILITY', false);
         $page->assign('INFO', 'example');
         $page->assign('NOTICE', 'example');
         $page->assign('LANGUAGESELECTION', '');
@@ -57,71 +60,53 @@ class ViewTest extends PHPUnit_Framework_TestCase
         $page->assign('EXPIREDEFAULT', self::$expire_default);
         $page->assign('URLSHORTENER', '');
         $page->assign('QRCODE', true);
+        $page->assign('EMAIL', true);
         $page->assign('HTTPWARNING', true);
         $page->assign('HTTPSLINK', 'https://example.com/');
         $page->assign('COMPRESSION', 'zlib');
+        $page->assign('CSPHEADER', 'default-src \'none\'');
+        $page->assign('SRI', []);
 
-        $dir = dir(PATH . 'tpl');
-        while (false !== ($file = $dir->read())) {
-            if (substr($file, -4) === '.php') {
-                $template = substr($file, 0, -4);
+        foreach (new DirectoryIterator(PATH . 'tpl') as $file) {
+            if ($file->getExtension() === 'php') {
+                $template = $file->getBasename('.php');
                 ob_start();
                 $page->draw($template);
                 $this->_content[$template] = ob_get_contents();
                 ob_end_clean();
             }
         }
-        // check bootstrap variants
-        $template = 'bootstrap-page';
-        ob_start();
-        $page->draw($template);
-        $this->_content[$template] = ob_get_contents();
-        ob_end_clean();
-        foreach (array('-dark', '-compact') as $suffix) {
-            $template = 'bootstrap' . $suffix;
-            ob_start();
-            $page->draw($template);
-            $this->_content[$template] = ob_get_contents();
-            ob_end_clean();
-
-            $template .= '-page';
-            ob_start();
-            $page->draw($template);
-            $this->_content[$template] = ob_get_contents();
-            ob_end_clean();
-        }
-    }
-
-    public function tearDown()
-    {
-        /* Tear Down Routine */
     }
 
     public function testTemplateRendersCorrectly()
     {
         foreach ($this->_content as $template => $content) {
-            $this->assertRegExp(
+            $this->assertMatchesRegularExpression(
                 '#<div[^>]+id="errormessage"[^>]*>.*' . self::$error . '#s',
                 $content,
                 $template . ': outputs error correctly'
             );
-            $this->assertRegExp(
+            if ($template === 'shortenerproxy') {
+                // shortenerproxy template only displays error message
+                continue;
+            }
+            $this->assertMatchesRegularExpression(
                 '#<[^>]+id="password"[^>]*>#',
                 $content,
                 $template . ': password available if configured'
             );
-            $this->assertRegExp(
+            $this->assertMatchesRegularExpression(
                 '#<input[^>]+id="opendiscussion"[^>]*checked="checked"[^>]*>#',
                 $content,
                 $template . ': checked discussion if configured'
             );
-            $this->assertRegExp(
+            $this->assertMatchesRegularExpression(
                 '#<[^>]+id="opendiscussionoption"[^>]*>#',
                 $content,
                 $template . ': discussions available if configured'
             );
             // testing version number in JS address, since other instances may not be present in different templates
-            $this->assertRegExp(
+            $this->assertMatchesRegularExpression(
                 '#<script[^>]+src="js/privatebin.js\\?' . rawurlencode(self::$version) . '"[^>]*>#',
                 $content,
                 $template . ': outputs version correctly'
@@ -129,13 +114,30 @@ class ViewTest extends PHPUnit_Framework_TestCase
         }
     }
 
-    /**
-     * @expectedException Exception
-     * @expectedExceptionCode 80
-     */
+    public function testBootstrap5RetryButtonStartsHiddenInItsListItem()
+    {
+        $this->assertArrayHasKey('bootstrap5', $this->_content);
+        $this->assertMatchesRegularExpression(
+            '#<li class="nav-item d-flex flex-lg-row flex-column hidden">\s*'
+            . '<button id="retrybutton" type="button" class="reloadlink hidden\b#',
+            $this->_content['bootstrap5'],
+            'bootstrap5: retry button stays inside an initially hidden list item'
+        );
+    }
+
     public function testMissingTemplate()
     {
         $test = new View;
+        $this->expectException(Exception::class);
+        $this->expectExceptionCode(80);
         $test->draw('123456789 does not exist!');
+    }
+
+    public function testInvalidTemplate()
+    {
+        $test = new View;
+        $this->expectException(Exception::class);
+        $this->expectExceptionCode(81);
+        $test->draw('../index');
     }
 }

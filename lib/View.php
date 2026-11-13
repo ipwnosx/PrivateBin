@@ -1,4 +1,4 @@
-<?php
+<?php declare(strict_types=1);
 /**
  * PrivateBin
  *
@@ -6,8 +6,7 @@
  *
  * @link      https://github.com/PrivateBin/PrivateBin
  * @copyright 2012 Sébastien SAUVAGE (sebsauvage.net)
- * @license   http://www.opensource.org/licenses/zlib-license.php The zlib/libpng License
- * @version   1.3.5
+ * @license   https://www.opensource.org/licenses/zlib-license.php The zlib/libpng License
  */
 
 namespace PrivateBin;
@@ -27,7 +26,7 @@ class View
      * @access private
      * @var    array
      */
-    private $_variables = array();
+    private $_variables = [];
 
     /**
      * assign variables to be used inside of the template
@@ -50,12 +49,73 @@ class View
      */
     public function draw($template)
     {
-        $file = substr($template, 0, 9) === 'bootstrap' ? 'bootstrap' : $template;
-        $path = PATH . 'tpl' . DIRECTORY_SEPARATOR . $file . '.php';
-        if (!file_exists($path)) {
-            throw new Exception('Template ' . $template . ' not found!', 80);
+        $dir = PATH . 'tpl' . DIRECTORY_SEPARATOR;
+        $file = substr($template, 0, 10) === 'bootstrap-' ? 'bootstrap' : $template;
+        $path = $dir . $file . '.php';
+        if (!is_file($path)) {
+            throw new Exception('Template ' . $template . ' not found in file ' . $path . '!', 80);
+        }
+        if (!in_array($path, glob($dir . '*.php', GLOB_NOSORT | GLOB_ERR), true)) {
+            throw new Exception('Template ' . $file . '.php not found in ' . $dir . '!', 81);
         }
         extract($this->_variables);
         include $path;
+    }
+
+    /**
+     * get cache buster query string
+     *
+     * if the file isn't versioned (ends in a digit), adds our own version as a query string
+     *
+     * @access private
+     * @param  string $file
+     */
+    private function _getCacheBuster($file)
+    {
+        if ((bool) preg_match('#[0-9]\.m?js$#', (string) $file)) {
+            return '';
+        }
+        return '?' . rawurlencode($this->_variables['VERSION']);
+    }
+
+    /**
+     * get SRI hash for given file
+     *
+     * @access private
+     * @param  string $file
+     */
+    private function _getSri($file)
+    {
+        if (array_key_exists($file, $this->_variables['SRI'])) {
+            return ' integrity="' . $this->_variables['SRI'][$file] . '"';
+        }
+        return '';
+    }
+
+    /**
+     * echo module preload link tag incl. SRI hash for given script file
+     *
+     * @access private
+     * @param  string $file
+     */
+    private function _linkTag($file)
+    {
+        echo '<link rel="modulepreload" href="', $file,
+        $this->_getCacheBuster($file), '"', $this->_getSri($file), ' />', PHP_EOL;
+    }
+
+    /**
+     * echo script tag incl. SRI hash for given script file
+     *
+     * @access private
+     * @param  string $file
+     * @param  string $attributes additional attributes to add into the script tag
+     */
+    private function _scriptTag($file, $attributes = '')
+    {
+        echo '<script ', $attributes,
+        ' type="text/javascript" data-cfasync="false" src="', $file,
+        $this->_getCacheBuster($file), '"', $this->_getSri($file),
+        ' crossorigin="anonymous"></script>', PHP_EOL;
     }
 }

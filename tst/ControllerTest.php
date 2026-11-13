@@ -1,28 +1,30 @@
-<?php
+<?php declare(strict_types=1);
 
+use PHPUnit\Framework\TestCase;
+use PrivateBin\Configuration;
 use PrivateBin\Controller;
 use PrivateBin\Data\Filesystem;
 use PrivateBin\Persistence\ServerSalt;
 use PrivateBin\Persistence\TrafficLimiter;
 use PrivateBin\Request;
 
-class ControllerTest extends PHPUnit_Framework_TestCase
+class ControllerTest extends TestCase
 {
     protected $_data;
 
     protected $_path;
 
-    public function setUp()
+    public function setUp(): void
     {
         /* Setup Routine */
-        $this->_path  = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'privatebin_data';
-        $this->_data  = Filesystem::getInstance(array('dir' => $this->_path));
+        $this->_path = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'privatebin_data';
+        $this->_data = new Filesystem(['dir' => $this->_path]);
         ServerSalt::setStore($this->_data);
         TrafficLimiter::setStore($this->_data);
         $this->reset();
     }
 
-    public function tearDown()
+    public function tearDown(): void
     {
         /* Tear Down Routine */
         unlink(CONF);
@@ -32,13 +34,13 @@ class ControllerTest extends PHPUnit_Framework_TestCase
 
     public function reset()
     {
-        $_POST   = array();
-        $_GET    = array();
-        $_SERVER = array();
+        $_POST = [];
+        $_GET = [];
+        $_SERVER = [];
         if ($this->_data->exists(Helper::getPasteId())) {
             $this->_data->delete(Helper::getPasteId());
         }
-        $options                         = parse_ini_file(CONF_SAMPLE, true);
+        $options = parse_ini_file(CONF_SAMPLE, true);
         $options['model_options']['dir'] = $this->_path;
         Helper::createIniFile(CONF, $options);
     }
@@ -48,21 +50,27 @@ class ControllerTest extends PHPUnit_Framework_TestCase
      */
     public function testView()
     {
-        $_SERVER['QUERY_STRING']          = Helper::getPasteId();
-        $_GET[Helper::getPasteId()]       = '';
+        $_SERVER['HTTP_HOST'] = 'example.com';
+        $_SERVER['QUERY_STRING'] = Helper::getPasteId();
+        $_GET[Helper::getPasteId()] = '';
         ob_start();
         new Controller;
         $content = ob_get_contents();
         ob_end_clean();
-        $this->assertContains(
+        $this->assertStringContainsString(
             '<title>PrivateBin</title>',
             $content,
             'outputs title correctly'
         );
-        $this->assertNotContains(
+        $this->assertStringNotContainsString(
             'id="shortenbutton"',
             $content,
             'doesn\'t output shortener button'
+        );
+        $this->assertMatchesRegularExpression(
+            '# href="https://' . preg_quote($_SERVER['HTTP_HOST']) . '/">switching to HTTPS#',
+            $content,
+            'outputs configured https URL correctly'
         );
     }
 
@@ -71,7 +79,7 @@ class ControllerTest extends PHPUnit_Framework_TestCase
      */
     public function testViewLanguageSelection()
     {
-        $options                              = parse_ini_file(CONF, true);
+        $options = parse_ini_file(CONF, true);
         $options['main']['languageselection'] = true;
         Helper::createIniFile(CONF, $options);
         $_COOKIE['lang'] = 'de';
@@ -79,7 +87,7 @@ class ControllerTest extends PHPUnit_Framework_TestCase
         new Controller;
         $content = ob_get_contents();
         ob_end_clean();
-        $this->assertContains(
+        $this->assertStringContainsString(
             '<title>PrivateBin</title>',
             $content,
             'outputs title correctly'
@@ -91,16 +99,16 @@ class ControllerTest extends PHPUnit_Framework_TestCase
      */
     public function testViewForceLanguageDefault()
     {
-        $options                              = parse_ini_file(CONF, true);
+        $options = parse_ini_file(CONF, true);
         $options['main']['languageselection'] = false;
-        $options['main']['languagedefault']   = 'fr';
+        $options['main']['languagedefault'] = 'fr';
         Helper::createIniFile(CONF, $options);
         $_COOKIE['lang'] = 'de';
         ob_start();
         new Controller;
         $content = ob_get_contents();
         ob_end_clean();
-        $this->assertContains(
+        $this->assertStringContainsString(
             '<title>PrivateBin</title>',
             $content,
             'outputs title correctly'
@@ -110,10 +118,32 @@ class ControllerTest extends PHPUnit_Framework_TestCase
     /**
      * @runInSeparateProcess
      */
+    public function testViewForceRegionalLanguageDefault()
+    {
+        $options = parse_ini_file(CONF, true);
+        $options['main']['languageselection'] = false;
+        $options['main']['languagedefault'] = 'zh-tw';
+        Helper::createIniFile(CONF, $options);
+        $_COOKIE['lang'] = 'de';
+        ob_start();
+        new Controller;
+        $content = ob_get_contents();
+        ob_end_clean();
+        $this->assertStringContainsString(
+            '<title>PrivateBin</title>',
+            $content,
+            'outputs title correctly'
+        );
+        $this->assertSame('zh-tw', $_COOKIE['lang'], 'forces configured default language');
+    }
+
+    /**
+     * @runInSeparateProcess
+     */
     public function testViewUrlShortener()
     {
-        $shortener                       = 'https://shortener.example.com/api?link=';
-        $options                         = parse_ini_file(CONF, true);
+        $shortener = 'https://shortener.example.com/api?link=';
+        $options = parse_ini_file(CONF, true);
         $options['main']['urlshortener'] = $shortener;
         Helper::createIniFile(CONF, $options);
         $_COOKIE['lang'] = 'de';
@@ -121,21 +151,38 @@ class ControllerTest extends PHPUnit_Framework_TestCase
         new Controller;
         $content = ob_get_contents();
         ob_end_clean();
-        $this->assertRegExp(
+        $this->assertMatchesRegularExpression(
             '#id="shortenbutton"[^>]*data-shortener="' . preg_quote($shortener) . '"#',
             $content,
             'outputs configured shortener URL correctly'
         );
     }
 
-    /**
-     * @expectedException Exception
-     * @expectedExceptionCode 2
-     */
     public function testConf()
     {
         file_put_contents(CONF, '');
+        $this->expectException(Exception::class);
+        $this->expectExceptionCode(2);
         new Controller;
+    }
+
+    /**
+     * @runInSeparateProcess
+     */
+    public function testNonDefaultConf()
+    {
+        $newConfig = new class extends Configuration {};
+        $configValue = (new ReflectionClass(Controller::class))->getProperty('_conf');
+        if (version_compare(PHP_VERSION, '8.1', '<')) {
+            // > This function has been DEPRECATED as of PHP 8.5.0. [...]
+            // > As of PHP 8.1.0, calling this method has no effect; all properties are accessible by default.
+            // @see: https://www.php.net/manual/en/reflectionproperty.setaccessible.php
+            $configValue->setAccessible(true);
+        }
+        ob_start();
+        $controller = new Controller($newConfig);
+        ob_end_clean();
+        $this->assertSame($newConfig, $configValue->getValue($controller));
     }
 
     /**
@@ -143,16 +190,16 @@ class ControllerTest extends PHPUnit_Framework_TestCase
      */
     public function testCreate()
     {
-        $options                     = parse_ini_file(CONF, true);
+        $options = parse_ini_file(CONF, true);
         $options['traffic']['limit'] = 0;
         Helper::createIniFile(CONF, $options);
         $paste = Helper::getPasteJson();
-        $file  = tempnam(sys_get_temp_dir(), 'FOO');
+        $file = Helper::createTempFile();
         file_put_contents($file, $paste);
         Request::setInputStream($file);
         $_SERVER['HTTP_X_REQUESTED_WITH'] = 'JSONHttpRequest';
-        $_SERVER['REQUEST_METHOD']        = 'POST';
-        $_SERVER['REMOTE_ADDR']           = '::1';
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_SERVER['REMOTE_ADDR'] = '::1';
         ob_start();
         new Controller;
         $content = ob_get_contents();
@@ -161,6 +208,7 @@ class ControllerTest extends PHPUnit_Framework_TestCase
         $this->assertEquals(0, $response['status'], 'outputs status');
         $this->assertTrue($this->_data->exists($response['id']), 'paste exists after posting data');
         $paste = $this->_data->read($response['id']);
+        $this->assertFalse(array_key_exists('created', $paste['meta']), 'does not output created');
         $this->assertEquals(
             hash_hmac('sha256', $response['id'], $paste['meta']['salt']),
             $response['deletetoken'],
@@ -173,16 +221,17 @@ class ControllerTest extends PHPUnit_Framework_TestCase
      */
     public function testCreateInvalidTimelimit()
     {
-        $options                     = parse_ini_file(CONF, true);
+        $options = parse_ini_file(CONF, true);
         $options['traffic']['limit'] = 0;
         Helper::createIniFile(CONF, $options);
-        $paste = Helper::getPasteJson(2, array('expire' => 25));
-        $file  = tempnam(sys_get_temp_dir(), 'FOO');
+        $paste = Helper::getPasteJson(['expire' => 25]);
+        $file = Helper::createTempFile();
         file_put_contents($file, $paste);
         Request::setInputStream($file);
         $_SERVER['HTTP_X_REQUESTED_WITH'] = 'JSONHttpRequest';
-        $_SERVER['REQUEST_METHOD']        = 'POST';
-        $_SERVER['REMOTE_ADDR']           = '::1';
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_SERVER['REMOTE_ADDR'] = '::1';
+        // Explicitly invoke TrafficLimiter to ensure limit applies to this test
         TrafficLimiter::canPass();
         ob_start();
         new Controller;
@@ -204,17 +253,44 @@ class ControllerTest extends PHPUnit_Framework_TestCase
      */
     public function testCreateInvalidSize()
     {
-        $options                      = parse_ini_file(CONF, true);
+        $options = parse_ini_file(CONF, true);
         $options['main']['sizelimit'] = 10;
-        $options['traffic']['limit']  = 0;
+        $options['traffic']['limit'] = 0;
         Helper::createIniFile(CONF, $options);
         $paste = Helper::getPasteJson();
-        $file  = tempnam(sys_get_temp_dir(), 'FOO');
+        $file = Helper::createTempFile();
         file_put_contents($file, $paste);
         Request::setInputStream($file);
         $_SERVER['HTTP_X_REQUESTED_WITH'] = 'JSONHttpRequest';
-        $_SERVER['REQUEST_METHOD']        = 'POST';
-        $_SERVER['REMOTE_ADDR']           = '::1';
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_SERVER['REMOTE_ADDR'] = '::1';
+        ob_start();
+        new Controller;
+        $content = ob_get_contents();
+        ob_end_clean();
+        $response = json_decode($content, true);
+        $this->assertEquals(1, $response['status'], 'outputs error status');
+        $this->assertFalse($this->_data->exists(Helper::getPasteId()), 'paste exists after posting data');
+    }
+
+    /**
+     * @runInSeparateProcess
+     */
+    public function testCreateOverSize()
+    {
+        $options = parse_ini_file(CONF, true);
+        $options['main']['sizelimit'] = 1000;
+        $options['traffic']['limit'] = 0;
+        Helper::createIniFile(CONF, $options);
+        $paste = Helper::getPastePost();
+        // add some extra authenticated data, could be a hypothetical future cryptographic hash, exceeding the sizelimit
+        $paste['adata'][] = str_repeat('0', $options['main']['sizelimit']);
+        $file = Helper::createTempFile();
+        file_put_contents($file, json_encode($paste));
+        Request::setInputStream($file);
+        $_SERVER['HTTP_X_REQUESTED_WITH'] = 'JSONHttpRequest';
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_SERVER['REMOTE_ADDR'] = '::1';
         ob_start();
         new Controller;
         $content = ob_get_contents();
@@ -229,17 +305,17 @@ class ControllerTest extends PHPUnit_Framework_TestCase
      */
     public function testCreateProxyHeader()
     {
-        $options                      = parse_ini_file(CONF, true);
+        $options = parse_ini_file(CONF, true);
         $options['traffic']['header'] = 'X_FORWARDED_FOR';
         Helper::createIniFile(CONF, $options);
         $paste = Helper::getPasteJson();
-        $file  = tempnam(sys_get_temp_dir(), 'FOO');
+        $file = Helper::createTempFile();
         file_put_contents($file, $paste);
         Request::setInputStream($file);
-        $_SERVER['HTTP_X_FORWARDED_FOR']  = '::2';
+        $_SERVER['HTTP_X_FORWARDED_FOR'] = '::2';
         $_SERVER['HTTP_X_REQUESTED_WITH'] = 'JSONHttpRequest';
-        $_SERVER['REQUEST_METHOD']        = 'POST';
-        $_SERVER['REMOTE_ADDR']           = '::1';
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_SERVER['REMOTE_ADDR'] = '::1';
         ob_start();
         new Controller;
         $content = ob_get_contents();
@@ -260,17 +336,18 @@ class ControllerTest extends PHPUnit_Framework_TestCase
      */
     public function testCreateDuplicateId()
     {
-        $options                     = parse_ini_file(CONF, true);
+        $options = parse_ini_file(CONF, true);
         $options['traffic']['limit'] = 0;
         Helper::createIniFile(CONF, $options);
-        $this->_data->create(Helper::getPasteId(), Helper::getPaste());
+        $paste = Helper::getPaste();
+        $this->_data->create(Helper::getPasteId(), $paste);
         $paste = Helper::getPasteJson();
-        $file  = tempnam(sys_get_temp_dir(), 'FOO');
+        $file = Helper::createTempFile();
         file_put_contents($file, $paste);
         Request::setInputStream($file);
         $_SERVER['HTTP_X_REQUESTED_WITH'] = 'JSONHttpRequest';
-        $_SERVER['REQUEST_METHOD']        = 'POST';
-        $_SERVER['REMOTE_ADDR']           = '::1';
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_SERVER['REMOTE_ADDR'] = '::1';
         ob_start();
         new Controller;
         $content = ob_get_contents();
@@ -285,17 +362,17 @@ class ControllerTest extends PHPUnit_Framework_TestCase
      */
     public function testCreateValidExpire()
     {
-        $options                     = parse_ini_file(CONF, true);
+        $options = parse_ini_file(CONF, true);
         $options['traffic']['limit'] = 0;
         Helper::createIniFile(CONF, $options);
         $paste = Helper::getPasteJson();
-        $file  = tempnam(sys_get_temp_dir(), 'FOO');
+        $file = Helper::createTempFile();
         file_put_contents($file, $paste);
         Request::setInputStream($file);
         $_SERVER['HTTP_X_REQUESTED_WITH'] = 'JSONHttpRequest';
-        $_SERVER['REQUEST_METHOD']        = 'POST';
-        $_SERVER['REMOTE_ADDR']           = '::1';
-        $time                             = time();
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_SERVER['REMOTE_ADDR'] = '::1';
+        $time = time();
         ob_start();
         new Controller;
         $content = ob_get_contents();
@@ -317,17 +394,17 @@ class ControllerTest extends PHPUnit_Framework_TestCase
      */
     public function testCreateValidExpireWithDiscussion()
     {
-        $options                     = parse_ini_file(CONF, true);
+        $options = parse_ini_file(CONF, true);
         $options['traffic']['limit'] = 0;
         Helper::createIniFile(CONF, $options);
         $paste = Helper::getPasteJson();
-        $file  = tempnam(sys_get_temp_dir(), 'FOO');
+        $file = Helper::createTempFile();
         file_put_contents($file, $paste);
         Request::setInputStream($file);
         $_SERVER['HTTP_X_REQUESTED_WITH'] = 'JSONHttpRequest';
-        $_SERVER['REQUEST_METHOD']        = 'POST';
-        $_SERVER['REMOTE_ADDR']           = '::1';
-        $time                             = time();
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_SERVER['REMOTE_ADDR'] = '::1';
+        $time = time();
         ob_start();
         new Controller;
         $content = ob_get_contents();
@@ -350,16 +427,16 @@ class ControllerTest extends PHPUnit_Framework_TestCase
      */
     public function testCreateInvalidExpire()
     {
-        $options                     = parse_ini_file(CONF, true);
+        $options = parse_ini_file(CONF, true);
         $options['traffic']['limit'] = 0;
         Helper::createIniFile(CONF, $options);
-        $paste = Helper::getPasteJson(2, array('expire' => 'foo'));
-        $file  = tempnam(sys_get_temp_dir(), 'FOO');
+        $paste = Helper::getPasteJson(['expire' => 'foo']);
+        $file = Helper::createTempFile();
         file_put_contents($file, $paste);
         Request::setInputStream($file);
         $_SERVER['HTTP_X_REQUESTED_WITH'] = 'JSONHttpRequest';
-        $_SERVER['REQUEST_METHOD']        = 'POST';
-        $_SERVER['REMOTE_ADDR']           = '::1';
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_SERVER['REMOTE_ADDR'] = '::1';
         ob_start();
         new Controller;
         $content = ob_get_contents();
@@ -380,17 +457,17 @@ class ControllerTest extends PHPUnit_Framework_TestCase
      */
     public function testCreateInvalidBurn()
     {
-        $options                     = parse_ini_file(CONF, true);
+        $options = parse_ini_file(CONF, true);
         $options['traffic']['limit'] = 0;
         Helper::createIniFile(CONF, $options);
-        $paste             = Helper::getPastePost();
+        $paste = Helper::getPastePost();
         $paste['adata'][3] = 'neither 1 nor 0';
-        $file              = tempnam(sys_get_temp_dir(), 'FOO');
+        $file = Helper::createTempFile();
         file_put_contents($file, json_encode($paste));
         Request::setInputStream($file);
         $_SERVER['HTTP_X_REQUESTED_WITH'] = 'JSONHttpRequest';
-        $_SERVER['REQUEST_METHOD']        = 'POST';
-        $_SERVER['REMOTE_ADDR']           = '::1';
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_SERVER['REMOTE_ADDR'] = '::1';
         ob_start();
         new Controller;
         $content = ob_get_contents();
@@ -405,17 +482,17 @@ class ControllerTest extends PHPUnit_Framework_TestCase
      */
     public function testCreateInvalidOpenDiscussion()
     {
-        $options                     = parse_ini_file(CONF, true);
+        $options = parse_ini_file(CONF, true);
         $options['traffic']['limit'] = 0;
         Helper::createIniFile(CONF, $options);
-        $paste             = Helper::getPastePost();
+        $paste = Helper::getPastePost();
         $paste['adata'][2] = 'neither 1 nor 0';
-        $file              = tempnam(sys_get_temp_dir(), 'FOO');
+        $file = Helper::createTempFile();
         file_put_contents($file, json_encode($paste));
         Request::setInputStream($file);
         $_SERVER['HTTP_X_REQUESTED_WITH'] = 'JSONHttpRequest';
-        $_SERVER['REQUEST_METHOD']        = 'POST';
-        $_SERVER['REMOTE_ADDR']           = '::1';
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_SERVER['REMOTE_ADDR'] = '::1';
         ob_start();
         new Controller;
         $content = ob_get_contents();
@@ -430,20 +507,23 @@ class ControllerTest extends PHPUnit_Framework_TestCase
      * silently removed, check that this case is handled
      *
      * @runInSeparateProcess
-     * @expectedException Exception
-     * @expectedExceptionCode 90
      */
     public function testCreateBrokenUpload()
     {
         $paste = substr(Helper::getPasteJson(), 0, -10);
-        $file  = tempnam(sys_get_temp_dir(), 'FOO');
+        $file = Helper::createTempFile();
         file_put_contents($file, $paste);
         Request::setInputStream($file);
         $_SERVER['HTTP_X_REQUESTED_WITH'] = 'JSONHttpRequest';
-        $_SERVER['REQUEST_METHOD']        = 'POST';
-        $_SERVER['REMOTE_ADDR']           = '::1';
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_SERVER['REMOTE_ADDR'] = '::1';
         $this->assertFalse($this->_data->exists(Helper::getPasteId()), 'paste does not exists before posting data');
+        ob_start();
         new Controller;
+        $content = ob_get_contents();
+        ob_end_clean();
+        $response = json_decode($content, true);
+        $this->assertEquals(1, $response['status'], 'outputs error status');
         $this->assertFalse($this->_data->exists(Helper::getPasteId()), 'paste exists after posting data');
     }
 
@@ -453,12 +533,12 @@ class ControllerTest extends PHPUnit_Framework_TestCase
     public function testCreateTooSoon()
     {
         $paste = Helper::getPasteJson();
-        $file  = tempnam(sys_get_temp_dir(), 'FOO');
+        $file = Helper::createTempFile();
         file_put_contents($file, $paste);
         Request::setInputStream($file);
         $_SERVER['HTTP_X_REQUESTED_WITH'] = 'JSONHttpRequest';
-        $_SERVER['REQUEST_METHOD']        = 'POST';
-        $_SERVER['REMOTE_ADDR']           = '::1';
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_SERVER['REMOTE_ADDR'] = '::1';
         ob_start();
         new Controller;
         ob_end_clean();
@@ -477,15 +557,15 @@ class ControllerTest extends PHPUnit_Framework_TestCase
      */
     public function testCreateInvalidFormat()
     {
-        $options                     = parse_ini_file(CONF, true);
+        $options = parse_ini_file(CONF, true);
         $options['traffic']['limit'] = 0;
         Helper::createIniFile(CONF, $options);
-        $file = tempnam(sys_get_temp_dir(), 'FOO');
-        file_put_contents($file, Helper::getPasteJson(1));
+        $file = Helper::createTempFile();
+        file_put_contents($file, '{"data":"","meta":{}}');
         Request::setInputStream($file);
         $_SERVER['HTTP_X_REQUESTED_WITH'] = 'JSONHttpRequest';
-        $_SERVER['REQUEST_METHOD']        = 'POST';
-        $_SERVER['REMOTE_ADDR']           = '::1';
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_SERVER['REMOTE_ADDR'] = '::1';
         ob_start();
         new Controller;
         $content = ob_get_contents();
@@ -500,17 +580,18 @@ class ControllerTest extends PHPUnit_Framework_TestCase
      */
     public function testCreateComment()
     {
-        $options                     = parse_ini_file(CONF, true);
+        $options = parse_ini_file(CONF, true);
         $options['traffic']['limit'] = 0;
         Helper::createIniFile(CONF, $options);
         $comment = Helper::getCommentJson();
-        $file    = tempnam(sys_get_temp_dir(), 'FOO');
+        $file = Helper::createTempFile();
         file_put_contents($file, $comment);
         Request::setInputStream($file);
         $_SERVER['HTTP_X_REQUESTED_WITH'] = 'JSONHttpRequest';
-        $_SERVER['REQUEST_METHOD']        = 'POST';
-        $_SERVER['REMOTE_ADDR']           = '::1';
-        $this->_data->create(Helper::getPasteId(), Helper::getPaste());
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_SERVER['REMOTE_ADDR'] = '::1';
+        $paste = Helper::getPaste();
+        $this->_data->create(Helper::getPasteId(), $paste);
         ob_start();
         new Controller;
         $content = ob_get_contents();
@@ -525,18 +606,19 @@ class ControllerTest extends PHPUnit_Framework_TestCase
      */
     public function testCreateInvalidComment()
     {
-        $options                     = parse_ini_file(CONF, true);
+        $options = parse_ini_file(CONF, true);
         $options['traffic']['limit'] = 0;
         Helper::createIniFile(CONF, $options);
-        $comment             = Helper::getCommentPost();
+        $comment = Helper::getCommentPost();
         $comment['parentid'] = 'foo';
-        $file                = tempnam(sys_get_temp_dir(), 'FOO');
+        $file = Helper::createTempFile();
         file_put_contents($file, json_encode($comment));
         Request::setInputStream($file);
         $_SERVER['HTTP_X_REQUESTED_WITH'] = 'JSONHttpRequest';
-        $_SERVER['REQUEST_METHOD']        = 'POST';
-        $_SERVER['REMOTE_ADDR']           = '::1';
-        $this->_data->create(Helper::getPasteId(), Helper::getPaste());
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_SERVER['REMOTE_ADDR'] = '::1';
+        $paste = Helper::getPaste();
+        $this->_data->create(Helper::getPasteId(), $paste);
         ob_start();
         new Controller;
         $content = ob_get_contents();
@@ -551,18 +633,18 @@ class ControllerTest extends PHPUnit_Framework_TestCase
      */
     public function testCreateCommentDiscussionDisabled()
     {
-        $options                     = parse_ini_file(CONF, true);
+        $options = parse_ini_file(CONF, true);
         $options['traffic']['limit'] = 0;
         Helper::createIniFile(CONF, $options);
         $comment = Helper::getCommentJson();
-        $file    = tempnam(sys_get_temp_dir(), 'FOO');
+        $file = Helper::createTempFile();
         file_put_contents($file, $comment);
         Request::setInputStream($file);
         $_SERVER['HTTP_X_REQUESTED_WITH'] = 'JSONHttpRequest';
-        $_SERVER['REQUEST_METHOD']        = 'POST';
-        $_SERVER['REMOTE_ADDR']           = '::1';
-        $paste                            = Helper::getPaste();
-        $paste['adata'][2]                = 0;
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_SERVER['REMOTE_ADDR'] = '::1';
+        $paste = Helper::getPaste();
+        $paste['adata'][2] = 0;
         $this->_data->create(Helper::getPasteId(), $paste);
         ob_start();
         new Controller;
@@ -578,16 +660,16 @@ class ControllerTest extends PHPUnit_Framework_TestCase
      */
     public function testCreateCommentInvalidPaste()
     {
-        $options                     = parse_ini_file(CONF, true);
+        $options = parse_ini_file(CONF, true);
         $options['traffic']['limit'] = 0;
         Helper::createIniFile(CONF, $options);
         $comment = Helper::getCommentJson();
-        $file    = tempnam(sys_get_temp_dir(), 'FOO');
+        $file = Helper::createTempFile();
         file_put_contents($file, $comment);
         Request::setInputStream($file);
         $_SERVER['HTTP_X_REQUESTED_WITH'] = 'JSONHttpRequest';
-        $_SERVER['REQUEST_METHOD']        = 'POST';
-        $_SERVER['REMOTE_ADDR']           = '::1';
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_SERVER['REMOTE_ADDR'] = '::1';
         ob_start();
         new Controller;
         $content = ob_get_contents();
@@ -602,26 +684,28 @@ class ControllerTest extends PHPUnit_Framework_TestCase
      */
     public function testCreateDuplicateComment()
     {
-        $options                     = parse_ini_file(CONF, true);
+        $options = parse_ini_file(CONF, true);
         $options['traffic']['limit'] = 0;
         Helper::createIniFile(CONF, $options);
-        $this->_data->create(Helper::getPasteId(), Helper::getPaste());
-        $this->_data->createComment(Helper::getPasteId(), Helper::getPasteId(), Helper::getPasteId(), Helper::getComment());
-        $this->assertTrue($this->_data->existsComment(Helper::getPasteId(), Helper::getPasteId(), Helper::getPasteId()), 'comment exists before posting data');
+        $paste = Helper::getPaste();
+        $this->_data->create(Helper::getPasteId(), $paste);
+        $comment = Helper::getComment();
+        $this->_data->createComment(Helper::getPasteId(), Helper::getPasteId(), Helper::getCommentId(), $comment);
+        $this->assertTrue($this->_data->existsComment(Helper::getPasteId(), Helper::getPasteId(), Helper::getCommentId()), 'comment exists before posting data');
         $comment = Helper::getCommentJson();
-        $file    = tempnam(sys_get_temp_dir(), 'FOO');
+        $file = Helper::createTempFile();
         file_put_contents($file, $comment);
         Request::setInputStream($file);
         $_SERVER['HTTP_X_REQUESTED_WITH'] = 'JSONHttpRequest';
-        $_SERVER['REQUEST_METHOD']        = 'POST';
-        $_SERVER['REMOTE_ADDR']           = '::1';
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_SERVER['REMOTE_ADDR'] = '::1';
         ob_start();
         new Controller;
         $content = ob_get_contents();
         ob_end_clean();
         $response = json_decode($content, true);
         $this->assertEquals(1, $response['status'], 'outputs error status');
-        $this->assertTrue($this->_data->existsComment(Helper::getPasteId(), Helper::getPasteId(), Helper::getPasteId()), 'paste exists after posting data');
+        $this->assertTrue($this->_data->existsComment(Helper::getPasteId(), Helper::getPasteId(), Helper::getCommentId()), 'paste exists after posting data');
     }
 
     /**
@@ -629,8 +713,8 @@ class ControllerTest extends PHPUnit_Framework_TestCase
      */
     public function testReadInvalidId()
     {
-        $_SERVER['QUERY_STRING']          = 'foo';
-        $_GET['foo']                      = '';
+        $_SERVER['QUERY_STRING'] = 'foo';
+        $_GET['foo'] = '';
         $_SERVER['HTTP_X_REQUESTED_WITH'] = 'JSONHttpRequest';
         ob_start();
         new Controller;
@@ -638,7 +722,7 @@ class ControllerTest extends PHPUnit_Framework_TestCase
         ob_end_clean();
         $response = json_decode($content, true);
         $this->assertEquals(1, $response['status'], 'outputs error status');
-        $this->assertEquals('Invalid paste ID.', $response['message'], 'outputs error message');
+        $this->assertEquals('Invalid document ID.', $response['message'], 'outputs error message');
     }
 
     /**
@@ -646,8 +730,8 @@ class ControllerTest extends PHPUnit_Framework_TestCase
      */
     public function testReadNonexisting()
     {
-        $_SERVER['QUERY_STRING']          = Helper::getPasteId();
-        $_GET[Helper::getPasteId()]       = '';
+        $_SERVER['QUERY_STRING'] = Helper::getPasteId();
+        $_GET[Helper::getPasteId()] = '';
         $_SERVER['HTTP_X_REQUESTED_WITH'] = 'JSONHttpRequest';
         ob_start();
         new Controller;
@@ -655,7 +739,7 @@ class ControllerTest extends PHPUnit_Framework_TestCase
         ob_end_clean();
         $response = json_decode($content, true);
         $this->assertEquals(1, $response['status'], 'outputs error status');
-        $this->assertEquals('Paste does not exist, has expired or has been deleted.', $response['message'], 'outputs error message');
+        $this->assertEquals('Document does not exist, has expired or has been deleted.', $response['message'], 'outputs error message');
     }
 
     /**
@@ -663,10 +747,10 @@ class ControllerTest extends PHPUnit_Framework_TestCase
      */
     public function testReadExpired()
     {
-        $expiredPaste = Helper::getPaste(2, array('expire_date' => 1344803344));
+        $expiredPaste = Helper::getPaste(['expire_date' => 1344803344]);
         $this->_data->create(Helper::getPasteId(), $expiredPaste);
-        $_SERVER['QUERY_STRING']          = Helper::getPasteId();
-        $_GET[Helper::getPasteId()]       = '';
+        $_SERVER['QUERY_STRING'] = Helper::getPasteId();
+        $_GET[Helper::getPasteId()] = '';
         $_SERVER['HTTP_X_REQUESTED_WITH'] = 'JSONHttpRequest';
         ob_start();
         new Controller;
@@ -674,7 +758,7 @@ class ControllerTest extends PHPUnit_Framework_TestCase
         ob_end_clean();
         $response = json_decode($content, true);
         $this->assertEquals(1, $response['status'], 'outputs error status');
-        $this->assertEquals('Paste does not exist, has expired or has been deleted.', $response['message'], 'outputs error message');
+        $this->assertEquals('Document does not exist, has expired or has been deleted.', $response['message'], 'outputs error message');
     }
 
     /**
@@ -682,11 +766,11 @@ class ControllerTest extends PHPUnit_Framework_TestCase
      */
     public function testReadBurn()
     {
-        $paste             = Helper::getPaste();
+        $paste = Helper::getPaste();
         $paste['adata'][3] = 1;
         $this->_data->create(Helper::getPasteId(), $paste);
-        $_SERVER['QUERY_STRING']          = Helper::getPasteId();
-        $_GET[Helper::getPasteId()]       = '';
+        $_SERVER['QUERY_STRING'] = Helper::getPasteId();
+        $_GET[Helper::getPasteId()] = '';
         $_SERVER['HTTP_X_REQUESTED_WITH'] = 'JSONHttpRequest';
         ob_start();
         new Controller;
@@ -700,7 +784,7 @@ class ControllerTest extends PHPUnit_Framework_TestCase
         $this->assertEquals($paste['adata'][1], $response['adata'][1], 'outputs formatter correctly');
         $this->assertEquals($paste['adata'][2], $response['adata'][2], 'outputs opendiscussion correctly');
         $this->assertEquals($paste['adata'][3], $response['adata'][3], 'outputs burnafterreading correctly');
-        $this->assertEquals($paste['meta']['created'], $response['meta']['created'], 'outputs created correctly');
+        $this->assertFalse(array_key_exists('created', $response['meta']), 'does not output created');
         $this->assertEquals(0, $response['comment_count'], 'outputs comment_count correctly');
         $this->assertEquals(0, $response['comment_offset'], 'outputs comment_offset correctly');
         // by default it will be deleted instantly after it is read
@@ -714,8 +798,8 @@ class ControllerTest extends PHPUnit_Framework_TestCase
     {
         $paste = Helper::getPaste();
         $this->_data->create(Helper::getPasteId(), $paste);
-        $_SERVER['QUERY_STRING']          = Helper::getPasteId();
-        $_GET[Helper::getPasteId()]       = '';
+        $_SERVER['QUERY_STRING'] = Helper::getPasteId();
+        $_GET[Helper::getPasteId()] = '';
         $_SERVER['HTTP_X_REQUESTED_WITH'] = 'JSONHttpRequest';
         ob_start();
         new Controller;
@@ -729,38 +813,7 @@ class ControllerTest extends PHPUnit_Framework_TestCase
         $this->assertEquals($paste['adata'][1], $response['adata'][1], 'outputs formatter correctly');
         $this->assertEquals($paste['adata'][2], $response['adata'][2], 'outputs opendiscussion correctly');
         $this->assertEquals($paste['adata'][3], $response['adata'][3], 'outputs burnafterreading correctly');
-        $this->assertEquals($paste['meta']['created'], $response['meta']['created'], 'outputs created correctly');
-        $this->assertEquals(0, $response['comment_count'], 'outputs comment_count correctly');
-        $this->assertEquals(0, $response['comment_offset'], 'outputs comment_offset correctly');
-    }
-
-    /**
-     * @runInSeparateProcess
-     */
-    public function testReadOldSyntax()
-    {
-        $paste         = Helper::getPaste(1);
-        $paste['meta'] = array(
-            'syntaxcoloring' => true,
-            'postdate'       => $paste['meta']['postdate'],
-            'opendiscussion' => $paste['meta']['opendiscussion'],
-        );
-        $this->_data->create(Helper::getPasteId(), $paste);
-        $_SERVER['QUERY_STRING']          = Helper::getPasteId();
-        $_GET[Helper::getPasteId()]       = '';
-        $_SERVER['HTTP_X_REQUESTED_WITH'] = 'JSONHttpRequest';
-        ob_start();
-        new Controller;
-        $content = ob_get_contents();
-        ob_end_clean();
-        $response = json_decode($content, true);
-        $this->assertEquals(0, $response['status'], 'outputs success status');
-        $this->assertEquals(Helper::getPasteId(), $response['id'], 'outputs data correctly');
-        $this->assertStringEndsWith('?' . $response['id'], $response['url'], 'returned URL points to new paste');
-        $this->assertEquals($paste['data'], $response['data'], 'outputs data correctly');
-        $this->assertEquals('syntaxhighlighting', $response['meta']['formatter'], 'outputs format correctly');
-        $this->assertEquals($paste['meta']['postdate'], $response['meta']['postdate'], 'outputs postdate correctly');
-        $this->assertEquals($paste['meta']['opendiscussion'], $response['meta']['opendiscussion'], 'outputs opendiscussion correctly');
+        $this->assertFalse(array_key_exists('created', $response['meta']), 'does not output created');
         $this->assertEquals(0, $response['comment_count'], 'outputs comment_count correctly');
         $this->assertEquals(0, $response['comment_offset'], 'outputs comment_offset correctly');
     }
@@ -770,12 +823,12 @@ class ControllerTest extends PHPUnit_Framework_TestCase
      */
     public function testReadBurnAfterReading()
     {
-        $burnPaste             = Helper::getPaste();
+        $burnPaste = Helper::getPaste();
         $burnPaste['adata'][3] = 1;
         $this->_data->create(Helper::getPasteId(), $burnPaste);
         $this->assertTrue($this->_data->exists(Helper::getPasteId()), 'paste exists before deleting data');
-        $_SERVER['QUERY_STRING']          = Helper::getPasteId();
-        $_GET[Helper::getPasteId()]       = '';
+        $_SERVER['QUERY_STRING'] = Helper::getPasteId();
+        $_GET[Helper::getPasteId()] = '';
         $_SERVER['HTTP_X_REQUESTED_WITH'] = 'JSONHttpRequest';
         ob_start();
         new Controller;
@@ -791,17 +844,18 @@ class ControllerTest extends PHPUnit_Framework_TestCase
      */
     public function testDelete()
     {
-        $this->_data->create(Helper::getPasteId(), Helper::getPaste());
+        $paste = Helper::getPaste();
+        $this->_data->create(Helper::getPasteId(), $paste);
         $this->assertTrue($this->_data->exists(Helper::getPasteId()), 'paste exists before deleting data');
-        $paste               = $this->_data->read(Helper::getPasteId());
-        $_GET['pasteid']     = Helper::getPasteId();
+        $paste = $this->_data->read(Helper::getPasteId());
+        $_GET['pasteid'] = Helper::getPasteId();
         $_GET['deletetoken'] = hash_hmac('sha256', Helper::getPasteId(), $paste['meta']['salt']);
         ob_start();
         new Controller;
         $content = ob_get_contents();
         ob_end_clean();
-        $this->assertRegExp(
-            '#<div[^>]*id="status"[^>]*>.*Paste was properly deleted\.#s',
+        $this->assertMatchesRegularExpression(
+            '#<div[^>]*id="status"[^>]*>.*Document was properly deleted\.#s',
             $content,
             'outputs deleted status correctly'
         );
@@ -813,15 +867,16 @@ class ControllerTest extends PHPUnit_Framework_TestCase
      */
     public function testDeleteInvalidId()
     {
-        $this->_data->create(Helper::getPasteId(), Helper::getPaste());
-        $_GET['pasteid']     = 'foo';
+        $paste = Helper::getPaste();
+        $this->_data->create(Helper::getPasteId(), $paste);
+        $_GET['pasteid'] = 'foo';
         $_GET['deletetoken'] = 'bar';
         ob_start();
         new Controller;
         $content = ob_get_contents();
         ob_end_clean();
-        $this->assertRegExp(
-            '#<div[^>]*id="errormessage"[^>]*>.*Invalid paste ID\.#s',
+        $this->assertMatchesRegularExpression(
+            '#<div[^>]*id="errormessage"[^>]*>.*Invalid document ID\.#s',
             $content,
             'outputs delete error correctly'
         );
@@ -833,14 +888,14 @@ class ControllerTest extends PHPUnit_Framework_TestCase
      */
     public function testDeleteInexistantId()
     {
-        $_GET['pasteid']     = Helper::getPasteId();
+        $_GET['pasteid'] = Helper::getPasteId();
         $_GET['deletetoken'] = 'bar';
         ob_start();
         new Controller;
         $content = ob_get_contents();
         ob_end_clean();
-        $this->assertRegExp(
-            '#<div[^>]*id="errormessage"[^>]*>.*Paste does not exist, has expired or has been deleted\.#s',
+        $this->assertMatchesRegularExpression(
+            '#<div[^>]*id="errormessage"[^>]*>.*Document does not exist, has expired or has been deleted\.#s',
             $content,
             'outputs delete error correctly'
         );
@@ -851,15 +906,16 @@ class ControllerTest extends PHPUnit_Framework_TestCase
      */
     public function testDeleteInvalidToken()
     {
-        $this->_data->create(Helper::getPasteId(), Helper::getPaste());
-        $_GET['pasteid']     = Helper::getPasteId();
+        $paste = Helper::getPaste();
+        $this->_data->create(Helper::getPasteId(), $paste);
+        $_GET['pasteid'] = Helper::getPasteId();
         $_GET['deletetoken'] = 'bar';
         ob_start();
         new Controller;
         $content = ob_get_contents();
         ob_end_clean();
-        $this->assertRegExp(
-            '#<div[^>]*id="errormessage"[^>]*>.*Wrong deletion token\. Paste was not deleted\.#s',
+        $this->assertMatchesRegularExpression(
+            '#<div[^>]*id="errormessage"[^>]*>.*Wrong deletion token\. Document was not deleted\.#s',
             $content,
             'outputs delete error correctly'
         );
@@ -871,17 +927,18 @@ class ControllerTest extends PHPUnit_Framework_TestCase
      */
     public function testDeleteInvalidBurnAfterReading()
     {
-        $this->_data->create(Helper::getPasteId(), Helper::getPaste());
+        $paste = Helper::getPaste();
+        $this->_data->create(Helper::getPasteId(), $paste);
         $this->assertTrue($this->_data->exists(Helper::getPasteId()), 'paste exists before deleting data');
-        $file  = tempnam(sys_get_temp_dir(), 'FOO');
-        file_put_contents($file, json_encode(array(
+        $file = Helper::createTempFile();
+        file_put_contents($file, json_encode([
             'deletetoken' => 'burnafterreading',
-        )));
+        ]));
         Request::setInputStream($file);
-        $_SERVER['QUERY_STRING']          = Helper::getPasteId();
-        $_GET[Helper::getPasteId()]       = '';
+        $_SERVER['QUERY_STRING'] = Helper::getPasteId();
+        $_GET[Helper::getPasteId()] = '';
         $_SERVER['HTTP_X_REQUESTED_WITH'] = 'JSONHttpRequest';
-        $_SERVER['REQUEST_METHOD']        = 'POST';
+        $_SERVER['REQUEST_METHOD'] = 'POST';
         ob_start();
         new Controller;
         $content = ob_get_contents();
@@ -896,43 +953,20 @@ class ControllerTest extends PHPUnit_Framework_TestCase
      */
     public function testDeleteExpired()
     {
-        $expiredPaste = Helper::getPaste(2, array('expire_date' => 1000));
+        $expiredPaste = Helper::getPaste(['expire_date' => 1000]);
         $this->assertFalse($this->_data->exists(Helper::getPasteId()), 'paste does not exist before being created');
         $this->_data->create(Helper::getPasteId(), $expiredPaste);
         $this->assertTrue($this->_data->exists(Helper::getPasteId()), 'paste exists before deleting data');
-        $_GET['pasteid']     = Helper::getPasteId();
+        $_GET['pasteid'] = Helper::getPasteId();
         $_GET['deletetoken'] = 'does not matter in this context, but has to be set';
         ob_start();
         new Controller;
         $content = ob_get_contents();
         ob_end_clean();
-        $this->assertRegExp(
-            '#<div[^>]*id="errormessage"[^>]*>.*Paste does not exist, has expired or has been deleted\.#s',
+        $this->assertMatchesRegularExpression(
+            '#<div[^>]*id="errormessage"[^>]*>.*Document does not exist, has expired or has been deleted\.#s',
             $content,
             'outputs error correctly'
-        );
-        $this->assertFalse($this->_data->exists(Helper::getPasteId()), 'paste successfully deleted');
-    }
-
-    /**
-     * @runInSeparateProcess
-     */
-    public function testDeleteMissingPerPasteSalt()
-    {
-        $paste = Helper::getPaste();
-        unset($paste['meta']['salt']);
-        $this->_data->create(Helper::getPasteId(), $paste);
-        $this->assertTrue($this->_data->exists(Helper::getPasteId()), 'paste exists before deleting data');
-        $_GET['pasteid']     = Helper::getPasteId();
-        $_GET['deletetoken'] = hash_hmac('sha256', Helper::getPasteId(), ServerSalt::get());
-        ob_start();
-        new Controller;
-        $content = ob_get_contents();
-        ob_end_clean();
-        $this->assertRegExp(
-            '#<div[^>]*id="status"[^>]*>.*Paste was properly deleted\.#s',
-            $content,
-            'outputs deleted status correctly'
         );
         $this->assertFalse($this->_data->exists(Helper::getPasteId()), 'paste successfully deleted');
     }

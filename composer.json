@@ -1,6 +1,6 @@
 {
 	"name" : "privatebin/privatebin",
-	"description" : "PrivateBin is a minimalist, open source online pastebin where the server has zero knowledge of pasted data. Data is encrypted/decrypted in the browser using 256 bit AES in Galois Counter mode (GCM).",
+	"description" : "PrivateBin is a minimalist, open source online pastebin where the server has zero knowledge of stored data. Data is encrypted/decrypted in the browser using 256 bit AES in Galois Counter mode (GCM).",
 	"type" : "project",
 	"keywords" : [
 		"private",
@@ -24,16 +24,18 @@
 		"docs" : "https://privatebin.info/codedoc/"
 	},
 	"require" : {
-		"php" : "^5.6.0 || ^7.0 || ^8.0",
-		"paragonie/random_compat" : "2.0.20",
-		"yzalis/identicon" : "2.0.0",
-		"mlocati/ip-lib" : "1.14.0"
+		"php": "^7.4 || ^8.0",
+		"jdenticon/jdenticon": "2.0.0",
+		"mlocati/ip-lib": "1.22.1",
+		"symfony/polyfill-php80": "1.43.0",
+		"yzalis/identicon": "2.0.0"
 	},
 	"suggest" : {
-		"google/cloud-storage" : "1.23.1"
+		"google/cloud-storage" : "1.45.0",
+		"aws/aws-sdk-php" : "3.336.2"
 	},
 	"require-dev" : {
-		"phpunit/phpunit" : "^4.6 || ^5.0"
+		"phpunit/phpunit" : "^9"
 	},
 	"autoload" : {
 		"psr-4" : {
@@ -41,6 +43,18 @@
 		}
 	},
 	"config" : {
-		"autoloader-suffix" : "DontChange"
+		"audit": {
+			"block-insecure": false,
+			"ignore": {
+				"CVE-2025-45769": "disputed on the basis that key lengths are expected to be set by an application, not by this library"
+			}
+		},
+		"autoloader-suffix" : "DontChange",
+		"optimize-autoloader": true,
+		"preferred-install": "dist",
+		"sort-packages": true,
+		"platform": {
+			"php": "7.4"
+		}
 	}
 }

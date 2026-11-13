@@ -1,4 +1,4 @@
-<?php
+<?php declare(strict_types=1);
 /**
  * PrivateBin
  *
@@ -7,13 +7,13 @@
  * @link      https://github.com/PrivateBin/PrivateBin
  * @copyright 2012 Sébastien SAUVAGE (sebsauvage.net)
  * @license   https://www.opensource.org/licenses/zlib-license.php The zlib/libpng License
- * @version   1.3.5
  */
 
 namespace PrivateBin\Model;
 
-use Exception;
 use Identicon\Identicon;
+use Jdenticon\Identicon as Jdenticon;
+use PrivateBin\Exception\TranslatedException;
 use PrivateBin\Persistence\TrafficLimiter;
 use PrivateBin\Vizhash16x16;
 
@@ -36,24 +36,44 @@ class Comment extends AbstractModel
      * Store the comment's data.
      *
      * @access public
-     * @throws Exception
+     * @throws TranslatedException
      */
     public function store()
     {
         // Make sure paste exists.
         $pasteid = $this->getPaste()->getId();
         if (!$this->getPaste()->exists()) {
-            throw new Exception('Invalid data.', 67);
+            throw new TranslatedException(self::INVALID_DATA_ERROR, 67);
         }
 
-        // Make sure the discussion is opened in this paste and in configuration.
+        // Make sure the discussion is opened in this paste and allowed in the configuration.
         if (!$this->getPaste()->isOpendiscussion() || !$this->_conf->getKey('discussion')) {
-            throw new Exception('Invalid data.', 68);
+            throw new TranslatedException(self::INVALID_DATA_ERROR, 68);
         }
 
         // Check for improbable collision.
         if ($this->exists()) {
-            throw new Exception('You are unlucky. Try again.', 69);
+            throw new TranslatedException(self::COLLISION_ERROR, 69);
+        }
+
+        // Comment IDs must be unique within the paste, regardless of the
+        // parent, and the parent must be either the paste or an existing comment.
+        $commentid = $this->getId();
+        $parentid = $this->getParentId();
+        $parentExists = $parentid === $pasteid;
+        if ($commentid === $pasteid) {
+            throw new TranslatedException(self::COLLISION_ERROR, 72);
+        }
+        foreach ($this->_store->readComments($pasteid) as $comment) {
+            if ($comment['id'] === $commentid) {
+                throw new TranslatedException(self::COLLISION_ERROR, 69);
+            }
+            if ($comment['id'] === $parentid) {
+                $parentExists = true;
+            }
+        }
+        if (!$parentExists) {
+            throw new TranslatedException(self::INVALID_DATA_ERROR, 71);
         }
 
         $this->_data['meta']['created'] = time();
@@ -67,19 +87,8 @@ class Comment extends AbstractModel
                 $this->_data
             ) === false
         ) {
-            throw new Exception('Error saving comment. Sorry.', 70);
+            throw new TranslatedException('Error saving comment. Sorry.', 70);
         }
-    }
-
-    /**
-     * Delete the comment.
-     *
-     * @access public
-     * @throws Exception
-     */
-    public function delete()
-    {
-        throw new Exception('To delete a comment, delete its parent paste', 64);
     }
 
     /**
@@ -102,11 +111,10 @@ class Comment extends AbstractModel
      *
      * @access public
      * @param Paste $paste
-     * @throws Exception
      */
-    public function setPaste(Paste $paste)
+    public function setPaste(Paste &$paste)
     {
-        $this->_paste           = $paste;
+        $this->_paste = $paste;
         $this->_data['pasteid'] = $paste->getId();
     }
 
@@ -126,12 +134,12 @@ class Comment extends AbstractModel
      *
      * @access public
      * @param string $id
-     * @throws Exception
+     * @throws TranslatedException
      */
     public function setParentId($id)
     {
         if (!self::isValidId($id)) {
-            throw new Exception('Invalid paste ID.', 65);
+            throw new TranslatedException('Invalid document ID.', 65);
         }
         $this->_data['parentid'] = $id;
     }
@@ -151,35 +159,58 @@ class Comment extends AbstractModel
     }
 
     /**
+     * Validate data.
+     *
+     * @access protected
+     * @param  array $data
+     * @throws TranslatedException
+     */
+    protected function _validate(array &$data)
+    {
+        // reject comments without authenticated IDs, if required
+        if ($this->_conf->getKey('discussionrequireauthenticatedids') && count($data['adata']) !== 10) {
+            throw new TranslatedException(self::INVALID_DATA_ERROR, 77);
+        }
+    }
+
+    /**
      * Sanitizes data to conform with current configuration.
      *
      * @access protected
      * @param  array $data
-     * @return array
      */
-    protected function _sanitize(array $data)
+    protected function _sanitize(array &$data)
     {
         // we generate an icon based on a SHA512 HMAC of the users IP, if configured
         $icon = $this->_conf->getKey('icon');
-        if ($icon != 'none') {
+        if ($icon !== 'none') {
             $pngdata = '';
-            $hmac    = TrafficLimiter::getHash();
-            if ($icon == 'identicon') {
+            $hmac = TrafficLimiter::getHash();
+            if ($icon === 'identicon') {
                 $identicon = new Identicon();
-                $pngdata   = $identicon->getImageDataUri($hmac, 16);
-            } elseif ($icon == 'vizhash') {
-                $vh      = new Vizhash16x16();
+                $pngdata = $identicon->getImageDataUri($hmac, 16);
+            } elseif ($icon === 'jdenticon') {
+                $jdenticon = new Jdenticon([
+                    'hash'  => $hmac,
+                    'size'  => 16,
+                    'style' => [
+                        'backgroundColor'   => '#fff0', // fully transparent, for dark mode
+                        'padding'           => 0,
+                    ],
+                ]);
+                $pngdata = $jdenticon->getImageDataUri('png');
+            } elseif ($icon === 'vizhash') {
+                $vh = new Vizhash16x16();
                 $pngdata = 'data:image/png;base64,' . base64_encode(
                     $vh->generate($hmac)
                 );
             }
-            if ($pngdata != '') {
+            if (!empty($pngdata)) {
                 if (!array_key_exists('meta', $data)) {
-                    $data['meta'] = array();
+                    $data['meta'] = [];
                 }
                 $data['meta']['icon'] = $pngdata;
             }
         }
-        return $data;
     }
 }

@@ -2,26 +2,40 @@
 
 // testing prerequisites
 global.assert = require('assert');
-global.jsc = require('jsverify');
+const fc = require('fast-check');
 global.jsdom = require('jsdom-global');
-global.cleanup = global.jsdom();
-global.URL = require('jsdom-url').URL;
+// initial DOM environment created by jsdom-global
+let currentCleanup = global.jsdom();
+
+// Recreates the jsdom environment and reloads privatebin.js into it.
+// The reload is necessary because modules close over DOM element references
+// in their init() methods, and pending async callbacks (e.g. setTimeout in
+// CopyToClipboard) would otherwise fire against elements from a dead window.
+global.cleanup = function (...args) {
+    if (typeof currentCleanup === 'function') {
+        currentCleanup();
+    }
+    currentCleanup = global.jsdom(...args);
+    delete require.cache[require.resolve('./privatebin')];
+    delete require.cache[require.resolve('./legacy')];
+    require('./privatebin');
+    global.PrivateBin = window.PrivateBin;
+    return global.cleanup;
+};
 global.fs = require('fs');
 global.WebCrypto = require('@peculiar/webcrypto').Crypto;
 
 // application libraries to test
-global.$ = global.jQuery = require('./jquery-3.4.1');
-global.RawDeflate = require('./rawinflate-0.3').RawDeflate;
-global.zlib = require('./zlib-1.2.11').zlib;
+global.zlib = require('./zlib').zlib;
 require('./prettify');
-global.prettyPrint = window.PR.prettyPrint;
-global.prettyPrintOne = window.PR.prettyPrintOne;
-global.showdown = require('./showdown-1.9.1');
-global.DOMPurify = require('./purify-2.2.7');
-global.baseX = require('./base-x-3.0.7').baseX;
+global.prettyPrint = window.PR ? window.PR.prettyPrint : function() {};
+global.prettyPrintOne = window.PR ? window.PR.prettyPrintOne : function() {};
+global.showdown = require('./showdown-2.1.0');
+global.DOMPurify = require('./purify-3.4.17');
+global.baseX = require('./base-x-5.0.1').baseX;
 global.Legacy = require('./legacy').Legacy;
-require('./bootstrap-3.3.7');
 require('./privatebin');
+global.PrivateBin = window.PrivateBin;
 
 // internal variables
 var a2zString    = ['a','b','c','d','e','f','g','h','i','j','k','l','m',
@@ -37,98 +51,115 @@ var a2zString    = ['a','b','c','d','e','f','g','h','i','j','k','l','m',
         })
     ),
     schemas = ['ftp','http','https'],
-    supportedLanguages = ['de', 'es', 'fr', 'it', 'no', 'pl', 'pt', 'oc', 'ru', 'sl', 'zh'],
-    mimeTypes = ['image/png', 'application/octet-stream'],
-    formats = ['plaintext', 'markdown', 'syntaxhighlighting'],
-    mimeFile = fs.createReadStream('/etc/mime.types'),
-    mimeLine = '';
-
-// populate mime types from environment
-mimeFile.on('data', function(data) {
-    mimeLine += data;
-    var index = mimeLine.indexOf('\n');
-    while (index > -1) {
-        var line = mimeLine.substring(0, index);
-        mimeLine = mimeLine.substring(index + 1);
-        parseMime(line);
-        index = mimeLine.indexOf('\n');
-    }
-});
-
-mimeFile.on('end', function() {
-    if (mimeLine.length > 0) {
-        parseMime(mimeLine);
-    }
-});
-
-function parseMime(line) {
-    // ignore comments
-    var index = line.indexOf('#');
-    if (index > -1) {
-        line = line.substring(0, index);
-    }
-
-    // ignore bits after tabs
-    index = line.indexOf('\t');
-    if (index > -1) {
-        line = line.substring(0, index);
-    }
-    if (line.length > 0) {
-        mimeTypes.push(line);
-    }
-}
+    supportedLanguages = ['ar', 'bg', 'ca', 'co', 'cs', 'de', 'el', 'es', 'et', 'fi', 'fr', 'he', 'hu', 'id', 'it', 'ja', 'jbo', 'lt', 'no', 'nl', 'pl', 'pt', 'oc', 'ru', 'sk', 'sl', 'th', 'tr', 'uk', 'zh', 'zh-tw'],
+    mimeTypes = ['image/png', 'application/octet-stream'].concat(Object.keys(require('mime-db'))),
+    formats = ['plaintext', 'markdown', 'syntaxhighlighting'];
 
 // common testing helper functions
-exports.atob = atob;
-exports.btoa = btoa;
+// as of jsDOM 22 the base64 functions provided in the DOM are more restrictive
+// than browser implementation and throw when being passed invalid unicode
+// codepoints - as we use these in the encryption with binary data, we need
+// these to be character encoding agnostic
+exports.atob = function(encoded) {
+    return Buffer.from(encoded, 'base64').toString('binary');
+};
+exports.btoa = function(text) {
+    return Buffer.from(text, 'binary').toString('base64');
+};
 
 // provides random lowercase characters from a to z
-exports.jscA2zString = function() {
-    return jsc.elements(a2zString);
+exports.fcA2zString = function() {
+    return fc.constantFrom(...a2zString);
+};
+
+// removes %s and %d placeholders from a string, including the whole run of
+// percent signs before them, so the removal can't create new ones (i.e. %%dd)
+exports.removePlaceholders = function(string) {
+    return string.replace(/%+(?=[sd])/g, '');
 };
 
 // provides random lowercase alpha numeric characters (a to z and 0 to 9)
-exports.jscAlnumString = function() {
-    return jsc.elements(alnumString);
+exports.fcAlnumString = function() {
+    return fc.constantFrom(...alnumString);
 };
 
 //provides random characters allowed in hexadecimal notation
-exports.jscHexString = function() {
-    return jsc.elements(hexString);
+exports.fcHexString = function() {
+    return fc.constantFrom(...hexString);
 };
 
 // provides random characters allowed in GET queries
-exports.jscQueryString = function() {
-    return jsc.elements(queryString);
+exports.fcQueryString = function() {
+    return fc.constantFrom(...queryString);
 };
 
 // provides random characters allowed in hash queries
-exports.jscHashString = function() {
-    return jsc.elements(hashString);
+exports.fcHashString = function() {
+    return fc.constantFrom(...hashString);
 };
 
 // provides random characters allowed in base64 encoded strings
-exports.jscBase64String = function() {
-    return jsc.elements(base64String);
+exports.fcBase64String = function() {
+    return fc.constantFrom(...base64String);
 };
 
 // provides a random URL schema supported by the whatwg-url library
-exports.jscSchemas = function() {
-    return jsc.elements(schemas);
+exports.fcSchemas = function(withFtp = true) {
+    return fc.constantFrom(...(withFtp ? schemas : schemas.slice(1)));
 };
 
 // provides a random supported language string
-exports.jscSupportedLanguages = function() {
-    return jsc.elements(supportedLanguages);
+exports.fcSupportedLanguages = function() {
+    return fc.constantFrom(...supportedLanguages);
 };
 
 // provides a random mime type
-exports.jscMimeTypes = function() {
-    return jsc.elements(mimeTypes);
+exports.fcMimeTypes = function() {
+    return fc.constantFrom(...mimeTypes);
 };
 
-// provides a random PrivateBin paste formatter
-exports.jscFormats = function() {
-    return jsc.elements(formats);
+// provides a random PrivateBin document formatter
+exports.fcFormats = function() {
+    return fc.constantFrom(...formats);
 };
 
+// provides random URLs
+exports.fcUrl = function(withFragment = true, withQuery = true) {
+    let url = {
+        schema: exports.fcSchemas(),
+        address: fc.array(exports.fcA2zString(), {minLength: 1}),
+    };
+    if (withFragment) {
+        url.fragment = fc.string();
+    }
+    if(withQuery) {
+        url.query = fc.array(exports.fcQueryString());
+    }
+    return fc.record(url);
+};
+
+exports.urlToString = function (url) {
+    return url.schema + '://' + url.address.join('') + '/' + (url.query ? '?' +
+        encodeURI(url.query.join('').replace(/^&+|&+$/gm,'')) : '') +
+        (url.fragment ? '#' + encodeURI(url.fragment) : '');
+};
+
+exports.enableClipboard = function () {
+    // @ts-ignore
+    navigator.clipboard = (function () {
+        let savedText = "";
+
+        async function writeText(text) {
+            savedText = text;
+        };
+
+        async function readText() {
+            return savedText;
+        };
+
+        return {
+            writeText,
+            readText,
+        };
+    })();
+};

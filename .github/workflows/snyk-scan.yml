@@ -8,14 +8,25 @@ on:
     branches: [ master ]
   pull_request:
     branches: [ master ]
+
+permissions: {}
+
 jobs:
   # https://github.com/snyk/actions/tree/master/php
   snyk-php:
+    permissions:
+      security-events: write
     runs-on: ubuntu-latest
+    if: |
+      github.repository == 'PrivateBin/PrivateBin' && (
+      github.event.pull_request.author_association == 'COLLABORATOR' ||
+      github.event.pull_request.author_association == 'CONTRIBUTOR' ||
+      github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.author_association == 'OWNER' )
     steps:
-      - uses: actions/checkout@master
-      - name: Install Google Cloud Storage
-        run: composer require --no-update google/cloud-storage && composer update --no-dev
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Run Snyk to check for vulnerabilities
         uses: snyk/actions/php@master
         continue-on-error: true # To make sure that SARIF upload gets called
@@ -24,6 +35,6 @@ jobs:
         with:
           args: --sarif-file-output=snyk.sarif
       - name: Upload result to GitHub Code Scanning
-        uses: github/codeql-action/upload-sarif@v1
+        uses: github/codeql-action/upload-sarif@v4.39.3
         with:
           sarif_file: snyk.sarif

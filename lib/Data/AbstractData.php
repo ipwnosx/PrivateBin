@@ -1,4 +1,4 @@
-<?php
+<?php declare(strict_types=1);
 /**
  * PrivateBin
  *
@@ -7,7 +7,6 @@
  * @link      https://github.com/PrivateBin/PrivateBin
  * @copyright 2012 Sébastien SAUVAGE (sebsauvage.net)
  * @license   https://www.opensource.org/licenses/zlib-license.php The zlib/libpng License
- * @version   1.3.5
  */
 
 namespace PrivateBin\Data;
@@ -15,61 +14,17 @@ namespace PrivateBin\Data;
 /**
  * AbstractData
  *
- * Abstract model for data access, implemented as a singleton.
+ * Abstract model for data access
  */
 abstract class AbstractData
 {
     /**
-     * Singleton instance
-     *
-     * @access protected
-     * @static
-     * @var AbstractData
-     */
-    protected static $_instance = null;
-
-    /**
      * cache for the traffic limiter
      *
-     * @access private
-     * @static
+     * @access protected
      * @var    array
      */
-    protected static $_last_cache = array();
-
-    /**
-     * Enforce singleton, disable constructor
-     *
-     * Instantiate using {@link getInstance()}, this object implements the singleton pattern.
-     *
-     * @access protected
-     */
-    protected function __construct()
-    {
-    }
-
-    /**
-     * Enforce singleton, disable cloning
-     *
-     * Instantiate using {@link getInstance()}, this object implements the singleton pattern.
-     *
-     * @access private
-     */
-    private function __clone()
-    {
-    }
-
-    /**
-     * Get instance of singleton
-     *
-     * @access public
-     * @static
-     * @param  array $options
-     * @return AbstractData
-     */
-    public static function getInstance(array $options)
-    {
-    }
+    protected $_last_cache = [];
 
     /**
      * Create a paste.
@@ -79,7 +34,7 @@ abstract class AbstractData
      * @param  array  $paste
      * @return bool
      */
-    abstract public function create($pasteid, array $paste);
+    abstract public function create($pasteid, array &$paste);
 
     /**
      * Read a paste.
@@ -117,7 +72,7 @@ abstract class AbstractData
      * @param  array  $comment
      * @return bool
      */
-    abstract public function createComment($pasteid, $parentid, $commentid, array $comment);
+    abstract public function createComment($pasteid, $parentid, $commentid, array &$comment);
 
     /**
      * Read all comments of paste.
@@ -150,9 +105,9 @@ abstract class AbstractData
     public function purgeValues($namespace, $time)
     {
         if ($namespace === 'traffic_limiter') {
-            foreach (self::$_last_cache as $key => $last_submission) {
+            foreach ($this->_last_cache as $key => $last_submission) {
                 if ($last_submission <= $time) {
-                    unset(self::$_last_cache[$key]);
+                    unset($this->_last_cache[$key]);
                 }
             }
         }
@@ -208,44 +163,49 @@ abstract class AbstractData
     }
 
     /**
-     * Get next free slot for comment from postdate.
+     * Returns all paste ids
+     *
+     * @access public
+     * @return array
+     */
+    abstract public function getAllPastes();
+
+    /**
+     * Get next free slot for comment from the creation timestamp
+     *
+     * The creation timestamp is usually a unix timestamp in seconds, but if a
+     * comment already exists at that timestamp, a number, separated by a dot is
+     * appended to it and incremented, then the function recurses until a free
+     * slot is found.
      *
      * @access protected
      * @param  array $comments
-     * @param  int|string $postdate
+     * @param  int|string $created
      * @return int|string
      */
-    protected function getOpenSlot(array &$comments, $postdate)
+    protected function getOpenSlot(array &$comments, $created)
     {
-        if (array_key_exists($postdate, $comments)) {
-            $parts = explode('.', $postdate, 2);
+        if (array_key_exists($created, $comments)) {
+            $parts = explode('.', (string) $created, 2);
             if (!array_key_exists(1, $parts)) {
                 $parts[1] = 0;
             }
             ++$parts[1];
             return $this->getOpenSlot($comments, implode('.', $parts));
         }
-        return $postdate;
+        return $created;
     }
 
     /**
-     * Upgrade pre-version 1 pastes with attachment to version 1 format.
+     * Sort comments chronologically, including collision suffixes.
      *
      * @access protected
-     * @static
-     * @param  array $paste
+     * @param  array $comments
      * @return array
      */
-    protected static function upgradePreV1Format(array $paste)
+    protected function sortComments(array $comments)
     {
-        if (array_key_exists('attachment', $paste['meta'])) {
-            $paste['attachment'] = $paste['meta']['attachment'];
-            unset($paste['meta']['attachment']);
-            if (array_key_exists('attachmentname', $paste['meta'])) {
-                $paste['attachmentname'] = $paste['meta']['attachmentname'];
-                unset($paste['meta']['attachmentname']);
-            }
-        }
-        return $paste;
+        ksort($comments, SORT_NATURAL);
+        return $comments;
     }
 }

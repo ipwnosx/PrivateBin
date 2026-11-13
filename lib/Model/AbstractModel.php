@@ -1,4 +1,4 @@
-<?php
+<?php declare(strict_types=1);
 /**
  * PrivateBin
  *
@@ -7,14 +7,13 @@
  * @link      https://github.com/PrivateBin/PrivateBin
  * @copyright 2012 Sébastien SAUVAGE (sebsauvage.net)
  * @license   https://www.opensource.org/licenses/zlib-license.php The zlib/libpng License
- * @version   1.3.5
  */
 
 namespace PrivateBin\Model;
 
-use Exception;
 use PrivateBin\Configuration;
 use PrivateBin\Data\AbstractData;
+use PrivateBin\Exception\TranslatedException;
 
 /**
  * AbstractModel
@@ -23,6 +22,20 @@ use PrivateBin\Data\AbstractData;
  */
 abstract class AbstractModel
 {
+    /**
+     * show the same error message if the data is invalid
+     *
+     * @const string
+     */
+    const INVALID_DATA_ERROR = 'Invalid data.';
+
+    /**
+     * show the same error message if the document ID already exists
+     *
+     * @const string
+     */
+    const COLLISION_ERROR = 'You are unlucky. Try again.';
+
     /**
      * Instance ID.
      *
@@ -37,7 +50,7 @@ abstract class AbstractModel
      * @access protected
      * @var array
      */
-    protected $_data = array('meta' => array());
+    protected $_data = ['meta' => []];
 
     /**
      * Configuration.
@@ -64,8 +77,8 @@ abstract class AbstractModel
      */
     public function __construct(Configuration $configuration, AbstractData $storage)
     {
-        $this->_conf       = $configuration;
-        $this->_store      = $storage;
+        $this->_conf = $configuration;
+        $this->_store = $storage;
     }
 
     /**
@@ -84,12 +97,12 @@ abstract class AbstractModel
      *
      * @access public
      * @param string $id
-     * @throws Exception
+     * @throws TranslatedException
      */
     public function setId($id)
     {
         if (!self::isValidId($id)) {
-            throw new Exception('Invalid paste ID.', 60);
+            throw new TranslatedException('Invalid document ID.', 60);
         }
         $this->_id = $id;
     }
@@ -99,16 +112,16 @@ abstract class AbstractModel
      *
      * @access public
      * @param  array $data
-     * @throws Exception
+     * @throws TranslatedException
      */
-    public function setData(array $data)
+    public function setData(array &$data)
     {
-        $data = $this->_sanitize($data);
+        $this->_sanitize($data);
         $this->_validate($data);
         $this->_data = $data;
 
         // calculate a 64 bit checksum to avoid collisions
-        $this->setId(hash(version_compare(PHP_VERSION, '5.6', '<') ? 'fnv164' : 'fnv1a64', $data['ct']));
+        $this->setId(hash('fnv1a64', $data['ct']));
     }
 
     /**
@@ -126,17 +139,9 @@ abstract class AbstractModel
      * Store the instance's data.
      *
      * @access public
-     * @throws Exception
+     * @throws TranslatedException
      */
     abstract public function store();
-
-    /**
-     * Delete the current instance.
-     *
-     * @access public
-     * @throws Exception
-     */
-    abstract public function delete();
 
     /**
      * Test if current instance exists in store.
@@ -156,7 +161,7 @@ abstract class AbstractModel
      */
     public static function isValidId($id)
     {
-        return (bool) preg_match('#\A[a-f\d]{16}\z#', (string) $id);
+        return (bool) preg_match('#\A[a-f0-9]{16}\z#', (string) $id);
     }
 
     /**
@@ -164,18 +169,17 @@ abstract class AbstractModel
      *
      * @access protected
      * @param  array $data
-     * @return array
      */
-    abstract protected function _sanitize(array $data);
+    abstract protected function _sanitize(array &$data);
 
     /**
      * Validate data.
      *
      * @access protected
      * @param  array $data
-     * @throws Exception
+     * @throws TranslatedException
      */
-    protected function _validate(array $data)
+    protected function _validate(array &$data)
     {
     }
 }

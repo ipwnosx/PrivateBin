@@ -6,7 +6,6 @@
  * @see       {@link https://github.com/PrivateBin/PrivateBin}
  * @copyright 2012 Sébastien SAUVAGE ({@link http://sebsauvage.net})
  * @license   {@link https://www.opensource.org/licenses/zlib-license.php The zlib/libpng License}
- * @version   1.3.1
  * @name      Legacy
  * @namespace
  */
@@ -14,7 +13,6 @@
 /**
  * IMPORTANT NOTICE FOR DEVELOPERS:
  * The logic in this file is intended to run in legacy browsers. Avoid any use of:
- * - jQuery (doesn't work in older browsers)
  * - ES5 or newer in general
  * - const/let, use the traditional var declarations instead
  * - async/await or Promises, use traditional callbacks
@@ -56,12 +54,43 @@
          * blacklist of UserAgents (parts) known to belong to a bot
          *
          * @private
-         * @enum   {Array}
+         * @type {string[]}
          * @readonly
          */
         var badBotUA = [
+            // Generic bot identifiers
+            'bot',
             'Bot',
-            'bot'
+            'crawler',
+            'Crawler',
+            'spider',
+            'Spider',
+            'scraper',
+            'Scraper',
+
+            // Search Engines
+            'Mediapartners-Google',
+            'BingPreview',
+            'Yahoo! Slurp',
+
+            // SEO & Analytics
+            'Screaming Frog',
+
+            // Social Media
+            'facebookexternalhit',
+
+            // AI & LLM
+            'ChatGPT-User',
+            'anthropic-ai',
+
+            // Security Scanners
+            'CensysInspect',
+            'Shodan',
+
+            // Other Common Crawlers
+            '80legs',
+            'ia_archiver',
+            'Teoma',
         ];
 
         /**
@@ -107,8 +136,8 @@
                 return window.isSecureContext;
             }
 
-            // HTTP is obviously insecure
-            if (window.location.protocol !== 'http:') {
+            // HTTPS is considered secure
+            if (window.location.protocol === 'https:') {
                 return true;
             }
 
@@ -141,7 +170,7 @@
          * @private
          * @name   Check.isBadBot
          * @function
-         * @return {bool}
+         * @return {Boolean}
          */
         function isBadBot() {
             // check whether a bot user agent part can be found in the current
@@ -175,18 +204,6 @@
             )) {
                 return true;
             }
-
-            // async & ES6 support
-            try {
-                eval('async () => {}');
-            } catch (e) {
-                if (e instanceof SyntaxError) {
-                    return true;
-                } else {
-                    throw e; // throws CSP error
-                }
-            }
-
             return false;
         }
 
@@ -238,19 +255,19 @@
         {
             return init;
         };
-        
+
         /**
          * returns the current status of the check
          *
          * @name   Check.getStatus
          * @function
-         * @return {bool}
+         * @return {Boolean}
          */
         me.getStatus = function()
         {
             return status;
         };
-        
+
         /**
          * init on application start, returns an all-clear signal
          *
@@ -259,7 +276,12 @@
          */
         me.init = function()
         {
-            // prevent bots from viewing a paste and potentially deleting data
+            // prevent early init
+            if (typeof document === 'undefined' || typeof navigator === 'undefined' || typeof window === 'undefined') {
+                return;
+            }
+
+            // prevent bots from viewing a document and potentially deleting data
             // when burn-after-reading is set
             if (isBadBot()) {
                 showError('I love you too, bot…');

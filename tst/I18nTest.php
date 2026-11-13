@@ -1,12 +1,32 @@
-<?php
+<?php declare(strict_types=1);
 
+use PHPUnit\Framework\TestCase;
 use PrivateBin\I18n;
+use PrivateBin\Json;
 
-class I18nTest extends PHPUnit_Framework_TestCase
+class I18nMock extends I18n
 {
-    private $_translations = array();
+    public static function resetAvailableLanguages()
+    {
+        self::$_availableLanguages = [];
+    }
 
-    public function setUp()
+    public static function resetPath($path = '')
+    {
+        self::$_path = $path;
+    }
+
+    public static function getPath($file = '')
+    {
+        return self::_getPath($file);
+    }
+}
+
+class I18nTest extends TestCase
+{
+    private $_translations = [];
+
+    public function setUp(): void
     {
         /* Setup Routine */
         $this->_translations = json_decode(
@@ -15,15 +35,16 @@ class I18nTest extends PHPUnit_Framework_TestCase
         );
     }
 
-    public function tearDown()
+    public function tearDown(): void
     {
-        /* Tear Down Routine */
+        unset($_COOKIE['lang'], $_SERVER['HTTP_ACCEPT_LANGUAGE']);
+        I18n::loadTranslations();
     }
 
     public function testTranslationFallback()
     {
         $_SERVER['HTTP_ACCEPT_LANGUAGE'] = 'foobar';
-        $messageId                       = 'It does not matter if the message ID exists';
+        $messageId = 'It does not matter if the message ID exists';
         I18n::loadTranslations();
         $this->assertEquals($messageId, I18n::_($messageId), 'fallback to en');
         I18n::getLanguageLabels();
@@ -33,7 +54,7 @@ class I18nTest extends PHPUnit_Framework_TestCase
     {
         $_COOKIE['lang'] = 'de';
         I18n::loadTranslations();
-        $this->assertEquals($this->_translations['en'], I18n::_('en'), 'browser language de');
+        $this->assertEquals($_COOKIE['lang'], I18n::getLanguage(), 'browser language de');
         $this->assertEquals('0 Stunden', I18n::_('%d hours', 0), '0 hours in German');
         $this->assertEquals('1 Stunde',  I18n::_('%d hours', 1), '1 hour in German');
         $this->assertEquals('2 Stunden', I18n::_('%d hours', 2), '2 hours in German');
@@ -43,7 +64,7 @@ class I18nTest extends PHPUnit_Framework_TestCase
     {
         $_SERVER['HTTP_ACCEPT_LANGUAGE'] = 'de-CH,de;q=0.8,en-GB;q=0.6,en-US;q=0.4,en;q=0.2,fr;q=0.0';
         I18n::loadTranslations();
-        $this->assertEquals($this->_translations['en'], I18n::_('en'), 'browser language de');
+        $this->assertEquals('de', I18n::getLanguage(), 'browser language de');
         $this->assertEquals('0 Stunden', I18n::_('%d hours', 0), '0 hours in German');
         $this->assertEquals('1 Stunde',  I18n::_('%d hours', 1), '1 hour in German');
         $this->assertEquals('2 Stunden', I18n::_('%d hours', 2), '2 hours in German');
@@ -53,17 +74,54 @@ class I18nTest extends PHPUnit_Framework_TestCase
     {
         $_SERVER['HTTP_ACCEPT_LANGUAGE'] = 'fr-CH,fr;q=0.8,en-GB;q=0.6,en-US;q=0.4,en;q=0.2,de;q=0.0';
         I18n::loadTranslations();
-        $this->assertEquals('fr', I18n::_('en'), 'browser language fr');
+        $this->assertEquals('fr', I18n::getLanguage(), 'browser language fr');
         $this->assertEquals('0 heure',  I18n::_('%d hours', 0), '0 hours in French');
         $this->assertEquals('1 heure',  I18n::_('%d hours', 1), '1 hour in French');
         $this->assertEquals('2 heures', I18n::_('%d hours', 2), '2 hours in French');
+    }
+
+    public function testEqualQualityPreservesBrowserOrder()
+    {
+        $_SERVER['HTTP_ACCEPT_LANGUAGE'] = 'fr;q=0.8,de;q=0.8';
+        I18n::loadTranslations();
+
+        $this->assertEquals('fr', I18n::getLanguage());
+    }
+
+    public function testBulgarianMonthExpirationTranslation()
+    {
+        $_COOKIE['lang'] = 'bg';
+        I18n::loadTranslations();
+
+        $this->assertEquals(
+            'Този документ изтича след един месец.',
+            I18n::_('This document will expire in %d months.', 1)
+        );
+        $this->assertEquals(
+            'Този документ изтича след 2 месеца.',
+            I18n::_('This document will expire in %d months.', 2)
+        );
+    }
+
+    public function testBrowserLanguageLtDetection()
+    {
+        $_SERVER['HTTP_ACCEPT_LANGUAGE'] = 'lt;q=0.8,en-GB;q=0.6,en-US;q=0.4,en;q=0.2';
+        I18n::loadTranslations();
+        $this->assertEquals('lt', I18n::getLanguage(), 'browser language lt');
+        $this->assertEquals('1 sekundę', I18n::_('%d seconds', 1), '1 second in Lithuanian');
+        $this->assertEquals('2 sekundės', I18n::_('%d seconds', 2), '2 seconds in Lithuanian');
+        $this->assertEquals('10 sekundžių', I18n::_('%d seconds', 10), '10 seconds in Lithuanian');
+        $this->assertEquals('22 sekundės', I18n::_('%d seconds', 22), '22 seconds in Lithuanian');
+        $this->assertEquals('110 sekundžių', I18n::_('%d seconds', 110), '110 seconds in Lithuanian');
+        $this->assertEquals('111 sekundžių', I18n::_('%d seconds', 111), '111 seconds in Lithuanian');
+        $this->assertEquals('120 sekundžių', I18n::_('%d seconds', 120), '120 seconds in Lithuanian');
     }
 
     public function testBrowserLanguageNoDetection()
     {
         $_SERVER['HTTP_ACCEPT_LANGUAGE'] = 'no;q=0.8,en-GB;q=0.6,en-US;q=0.4,en;q=0.2';
         I18n::loadTranslations();
-        $this->assertEquals('no', I18n::_('en'), 'browser language no');
+        $this->assertEquals('no', I18n::getLanguage(), 'browser language no');
         $this->assertEquals('0 timer',  I18n::_('%d hours', 0), '0 hours in Norwegian');
         $this->assertEquals('1 time',  I18n::_('%d hours', 1), '1 hour in Norwegian');
         $this->assertEquals('2 timer', I18n::_('%d hours', 2), '2 hours in Norwegian');
@@ -73,7 +131,7 @@ class I18nTest extends PHPUnit_Framework_TestCase
     {
         $_SERVER['HTTP_ACCEPT_LANGUAGE'] = 'oc;q=0.8,en-GB;q=0.6,en-US;q=0.4,en;q=0.2';
         I18n::loadTranslations();
-        $this->assertEquals('oc', I18n::_('en'), 'browser language oc');
+        $this->assertEquals('oc', I18n::getLanguage(), 'browser language oc');
         $this->assertEquals('0 ora',  I18n::_('%d hours', 0), '0 hours in Occitan');
         $this->assertEquals('1 ora',  I18n::_('%d hours', 1), '1 hour in Occitan');
         $this->assertEquals('2 oras', I18n::_('%d hours', 2), '2 hours in Occitan');
@@ -83,32 +141,53 @@ class I18nTest extends PHPUnit_Framework_TestCase
     {
         $_SERVER['HTTP_ACCEPT_LANGUAGE'] = 'zh;q=0.8,en-GB;q=0.6,en-US;q=0.4,en;q=0.2';
         I18n::loadTranslations();
-        $this->assertEquals('zh', I18n::_('en'), 'browser language zh');
+        $this->assertEquals('zh', I18n::getLanguage(), 'browser language zh');
         $this->assertEquals('0 小时',  I18n::_('%d hours', 0), '0 hours in Chinese');
         $this->assertEquals('1 小时',  I18n::_('%d hours', 1), '1 hour in Chinese');
         $this->assertEquals('2 小时', I18n::_('%d hours', 2), '2 hours in Chinese');
+    }
+
+    public function testBrowserLanguageZhHantDetection()
+    {
+        foreach ([
+            'zh-Hant,zh;q=0.8,en;q=0.2'            => 'zh-tw',
+            'zh-Hant-TW,zh;q=0.8,en;q=0.2'         => 'zh-tw',
+            'zh-TW,en;q=0.2'                       => 'zh-tw',
+            'zh-TW-u-nu-hanidec,en;q=0.2'          => 'zh-tw',
+            'zh-HK,zh;q=0.8,en;q=0.2'              => 'zh-tw',
+            'zh-MO,zh;q=0.8,en;q=0.2'              => 'zh-tw',
+            'zh-Hant,zh-Hans;q=0.8,en;q=0.2'       => 'zh-tw',
+            'zh-CN,zh-Hant;q=0.8,en;q=0.2'         => 'zh',
+            'zh-Hans,zh-Hant;q=0.8,en;q=0.2'       => 'zh',
+            'zh-Hans-CN,en;q=0.2'                  => 'zh',
+            'zh;q=0.9,zh-Hant;q=0.8,en;q=0.2'      => 'zh',
+        ] as $acceptedLanguage => $language) {
+            $_SERVER['HTTP_ACCEPT_LANGUAGE'] = $acceptedLanguage;
+            I18n::loadTranslations();
+            $this->assertEquals($language, I18n::getLanguage(), 'browser language ' . $acceptedLanguage);
+        }
     }
 
     public function testBrowserLanguagePlDetection()
     {
         $_SERVER['HTTP_ACCEPT_LANGUAGE'] = 'pl;q=0.8,en-GB;q=0.6,en-US;q=0.4,en;q=0.2';
         I18n::loadTranslations();
-        $this->assertEquals('pl', I18n::_('en'), 'browser language pl');
+        $this->assertEquals('pl', I18n::getLanguage(), 'browser language pl');
         $this->assertEquals('1 godzina', I18n::_('%d hours', 1), '1 hour in Polish');
-        $this->assertEquals('2 godzina', I18n::_('%d hours', 2), '2 hours in Polish');
-        $this->assertEquals('12 godzinę', I18n::_('%d hours', 12), '12 hours in Polish');
-        $this->assertEquals('22 godzina', I18n::_('%d hours', 22), '22 hours in Polish');
-        $this->assertEquals('1 minut',  I18n::_('%d minutes', 1), '1 minute in Polish');
-        $this->assertEquals('3 minut',  I18n::_('%d minutes', 3), '3 minutes in Polish');
+        $this->assertEquals('2 godziny', I18n::_('%d hours', 2), '2 hours in Polish');
+        $this->assertEquals('12 godzin', I18n::_('%d hours', 12), '12 hours in Polish');
+        $this->assertEquals('22 godziny', I18n::_('%d hours', 22), '22 hours in Polish');
+        $this->assertEquals('1 minuta',  I18n::_('%d minutes', 1), '1 minute in Polish');
+        $this->assertEquals('3 minuty',  I18n::_('%d minutes', 3), '3 minutes in Polish');
         $this->assertEquals('13 minut',  I18n::_('%d minutes', 13), '13 minutes in Polish');
-        $this->assertEquals('23 minut',  I18n::_('%d minutes', 23), '23 minutes in Polish');
+        $this->assertEquals('23 minuty',  I18n::_('%d minutes', 23), '23 minutes in Polish');
     }
 
     public function testBrowserLanguageRuDetection()
     {
         $_SERVER['HTTP_ACCEPT_LANGUAGE'] = 'ru;q=0.8,en-GB;q=0.6,en-US;q=0.4,en;q=0.2';
         I18n::loadTranslations();
-        $this->assertEquals('ru', I18n::_('en'), 'browser language ru');
+        $this->assertEquals('ru', I18n::getLanguage(), 'browser language ru');
         $this->assertEquals('1 минуту',  I18n::_('%d minutes', 1), '1 minute in Russian');
         $this->assertEquals('3 минуты',  I18n::_('%d minutes', 3), '3 minutes in Russian');
         $this->assertEquals('10 минут',  I18n::_('%d minutes', 10), '10 minutes in Russian');
@@ -119,33 +198,39 @@ class I18nTest extends PHPUnit_Framework_TestCase
     {
         $_SERVER['HTTP_ACCEPT_LANGUAGE'] = 'sl;q=0.8,en-GB;q=0.6,en-US;q=0.4,en;q=0.2';
         I18n::loadTranslations();
-        $this->assertEquals('sl', I18n::_('en'), 'browser language sl');
-        $this->assertEquals('0 ura',  I18n::_('%d hours', 0), '0 hours in Slowene');
-        $this->assertEquals('1 uri',  I18n::_('%d hours', 1), '1 hour in Slowene');
-        $this->assertEquals('2 ure', I18n::_('%d hours', 2), '2 hours in Slowene');
-        $this->assertEquals('3 ur',  I18n::_('%d hours', 3), '3 hours in Slowene');
-        $this->assertEquals('11 ura',  I18n::_('%d hours', 11), '11 hours in Slowene');
-        $this->assertEquals('101 uri',  I18n::_('%d hours', 101), '101 hours in Slowene');
-        $this->assertEquals('102 ure', I18n::_('%d hours', 102), '102 hours in Slowene');
-        $this->assertEquals('104 ur',  I18n::_('%d hours', 104), '104 hours in Slowene');
+        $this->assertEquals('sl', I18n::getLanguage(), 'browser language sl');
+        $this->assertEquals('0 ur',  I18n::_('%d hours', 0), '0 hours in Slovene');
+        $this->assertEquals('1 ura',  I18n::_('%d hours', 1), '1 hour in Slovene');
+        $this->assertEquals('2 uri', I18n::_('%d hours', 2), '2 hours in Slovene');
+        $this->assertEquals('3 ure',  I18n::_('%d hours', 3), '3 hours in Slovene');
+        $this->assertEquals('11 ur',  I18n::_('%d hours', 11), '11 hours in Slovene');
+        $this->assertEquals('101 ura',  I18n::_('%d hours', 101), '101 hours in Slovene');
+        $this->assertEquals('102 uri', I18n::_('%d hours', 102), '102 hours in Slovene');
+        $this->assertEquals('104 ure',  I18n::_('%d hours', 104), '104 hours in Slovene');
     }
 
     public function testBrowserLanguageCsDetection()
     {
         $_SERVER['HTTP_ACCEPT_LANGUAGE'] = 'cs;q=0.8,en-GB;q=0.6,en-US;q=0.4,en;q=0.2';
         I18n::loadTranslations();
-        $this->assertEquals('cs', I18n::_('en'), 'browser language cs');
-        $this->assertEquals('1 hodin', I18n::_('%d hours', 1), '1 hour in Czech');
-        $this->assertEquals('2 hodiny', I18n::_('%d hours', 2), '2 hours in Czech');
-        $this->assertEquals('5 minut',  I18n::_('%d minutes', 5), '5 minutes in Czech');
-        $this->assertEquals('14 minut',  I18n::_('%d minutes', 14), '14 minutes in Czech');
+        $this->assertEquals('cs', I18n::getLanguage(), 'browser language cs');
+        $this->assertEquals('1 hodina', I18n::_('%d hours', 1), '1 hour in Czech');
+        $this->assertEquals('2 hodiny', I18n::_('%d hours', 2), '2 hours in Czech');
+        $this->assertEquals('5 minut',  I18n::_('%d minutes', 5), '5 minutes in Czech');
+        $this->assertEquals('14 minut',  I18n::_('%d minutes', 14), '14 minutes in Czech');
+    }
+
+    public function testInvalidBrowserLanguageQualityIsIgnored()
+    {
+        $_SERVER['HTTP_ACCEPT_LANGUAGE'] = 'de;q=2,en;q=0.8';
+        $this->assertSame(['0.8' => ['en']], I18n::getBrowserLanguages());
     }
 
     public function testBrowserLanguageAnyDetection()
     {
         $_SERVER['HTTP_ACCEPT_LANGUAGE'] = '*';
         I18n::loadTranslations();
-        $this->assertTrue(strlen(I18n::_('en')) == 2, 'browser language any');
+        $this->assertTrue(strlen(I18n::getLanguage()) >= 2, 'browser language any');
     }
 
     public function testVariableInjection()
@@ -159,30 +244,105 @@ class I18nTest extends PHPUnit_Framework_TestCase
     {
         $_SERVER['HTTP_ACCEPT_LANGUAGE'] = 'foobar';
         I18n::loadTranslations();
-        $input  = '&<>"\'/`=';
+        $input = '&<>"\'/`=';
         $result = htmlspecialchars($input, ENT_QUOTES | ENT_HTML5 | ENT_DISALLOWED, 'UTF-8', false);
         $this->assertEquals($result, I18n::encode($input), 'encodes HTML entities');
         $this->assertEquals('<a>some ' . $result . ' + 1</a>', I18n::_('<a>some %s + %d</a>', $input, 1), 'encodes parameters in translations');
-        $this->assertEquals($result . $result, I18n::_($input . '%s', $input), 'encodes message ID as well, when no link');
+        // Message ID should NOT be encoded (it comes from trusted source), only the parameter should be
+        $this->assertEquals($input . $result, I18n::_($input . '%s', $input), 'encodes only parameters, not message ID');
+    }
+
+    public function testApostropheEncodngInMessage()
+    {
+        $_SERVER['HTTP_ACCEPT_LANGUAGE'] = 'fr';
+        I18n::loadTranslations();
+        // For example, the French translation should not have the apostrophe encoded
+        // See https://github.com/PrivateBin/PrivateBin/issues/1712
+        $message = I18n::_('Document does not exist, has expired or has been deleted.');
+        $this->assertFalse(str_contains($message, '&apos;'), 'French apostrophe should not be encoded in translation message');
+        $this->assertTrue(str_contains($message, "n'existe"), 'French apostrophe should be present as literal character');
+    }
+
+    public function testFallbackAlwaysPresent()
+    {
+        $path = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'privatebin_i18n';
+        if (!is_dir($path)) {
+            mkdir($path);
+        }
+
+        $languageIterator = new AppendIterator();
+        $languageIterator->append(new GlobIterator(I18nMock::getPath('??.json')));
+        $languageIterator->append(new GlobIterator(I18nMock::getPath('???.json'))); // for jbo
+        $languageIterator->append(new GlobIterator(I18nMock::getPath('??-??.json'))); // for regional variants like zh-tw
+        $languageCount = 0;
+        foreach ($languageIterator as $file) {
+            ++$languageCount;
+            $this->assertTrue(copy($file->getPathname(), $path . DIRECTORY_SEPARATOR . $file->getBasename()));
+        }
+
+        I18nMock::resetPath($path);
+        $languagesDevelopment = I18nMock::getAvailableLanguages();
+        $this->assertEquals($languageCount, count($languagesDevelopment), 'all copied languages detected');
+        $this->assertTrue(in_array('en', $languagesDevelopment), 'English fallback present');
+
+        unlink($path . DIRECTORY_SEPARATOR . 'en.json');
+        I18nMock::resetAvailableLanguages();
+        $languagesDeployed = I18nMock::getAvailableLanguages();
+        $this->assertEquals($languageCount, count($languagesDeployed), 'all copied languages detected, plus fallback');
+        $this->assertTrue(in_array('en', $languagesDeployed), 'English fallback still present');
+
+        I18nMock::resetAvailableLanguages();
+        I18nMock::resetPath();
+        Helper::rmDir($path);
+    }
+
+    public function testGetCopyHotkey()
+    {
+        $_SERVER['HTTP_USER_AGENT'] = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)';
+        $this->assertEquals('Cmd', I18n::getCopyHotkey(), 'returns Cmd on macOS');
+
+        $_SERVER['HTTP_USER_AGENT'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)';
+        $this->assertEquals('Ctrl', I18n::getCopyHotkey(), 'returns Ctrl on Windows');
+
+        $_SERVER['HTTP_USER_AGENT'] = 'Mozilla/5.0 (X11; Linux x86_64)';
+        $this->assertEquals('Ctrl', I18n::getCopyHotkey(), 'returns Ctrl on Linux');
+
+        unset($_SERVER['HTTP_USER_AGENT']);
+        $this->assertEquals('Ctrl', I18n::getCopyHotkey(), 'returns Ctrl when user agent absent');
+    }
+
+    public function testRightToLeftLanguages()
+    {
+        foreach (['ar', 'fa', 'he'] as $language) {
+            $_COOKIE['lang'] = $language;
+            I18n::loadTranslations();
+            $this->assertTrue(I18n::isRtl(), "$language is right-to-left");
+        }
+
+        $_COOKIE['lang'] = 'en';
+        I18n::loadTranslations();
+        $this->assertFalse(I18n::isRtl(), 'English is left-to-right');
     }
 
     public function testMessageIdsExistInAllLanguages()
     {
-        $messageIds = array();
-        $languages  = array();
-        $dir        = dir(PATH . 'i18n');
-        while (false !== ($file = $dir->read())) {
-            if (strlen($file) === 7) {
-                $language            = substr($file, 0, 2);
-                $languageMessageIds  = array_keys(
-                    json_decode(
-                        file_get_contents(PATH . 'i18n' . DIRECTORY_SEPARATOR . $file),
-                        true
-                    )
-                );
-                $messageIds           = array_unique(array_merge($messageIds, $languageMessageIds));
-                $languages[$language] = $languageMessageIds;
+        $messageIds = [];
+        $languages = [];
+        foreach (new DirectoryIterator(PATH . 'i18n') as $file) {
+            $fileNameLength = strlen($file->getFilename());
+            if ($fileNameLength === 7) {       // xx.json
+                $language = substr($file->getFilename(), 0, 2);
+            } elseif ($fileNameLength === 8) { // jbo.json
+                $language = substr($file->getFilename(), 0, 3);
+            } elseif ($fileNameLength === 10) { // xx-xx.json
+                $language = substr($file->getFilename(), 0, 5);
+            } else {
+                continue;
             }
+            $languageJson = file_get_contents($file->getPathname());
+            $languageMessageIds = array_keys(Json::decode($languageJson));
+            $messageIds = array_unique(array_merge($messageIds, $languageMessageIds));
+            $languages[$language] = $languageMessageIds;
         }
         foreach ($messageIds as $messageId) {
             foreach (array_keys($languages) as $language) {

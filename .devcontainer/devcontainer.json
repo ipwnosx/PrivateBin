@@ -1,0 +1,50 @@
+{
+    "name": "PHP",
+    "image": "mcr.microsoft.com/devcontainers/php",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+				"github.codespaces",
+                // PHP from https://github.com/devcontainers/templates/tree/main/src/php
+				"xdebug.php-debug",
+				"bmewburn.vscode-intelephense-client",
+				"xdebug.php-pack",
+                // PHP
+				"DEVSENSE.phptools-vscode",
+				"DEVSENSE.composer-php-vscode",
+                // linting
+				"EditorConfig.EditorConfig",
+				"dbaeumer.vscode-eslint",
+				"raymondcamden.CSSLint",
+                // testing
+                "hbenl.vscode-mocha-test-adapter",
+                "recca0120.vscode-phpunit"
+            ]
+        },
+        "codespaces": {
+            "openFiles": [
+                "README.md",
+                "doc/README.md"
+            ],
+            "repositories": {
+                "PrivateBin/*": {
+                    "permissions": {
+                        "pull_requests": "write"
+                    }
+                }
+            }
+        }
+    },
+    "features": {
+        "ghcr.io/devcontainers-extra/features/mocha:2": {},
+        "ghcr.io/yassinedoghri/devcontainers/php-extensions-installer:1": {
+            "extensions": "gd intl"
+        }
+    },
+    "forwardPorts": [
+        8080
+    ],
+    "postCreateCommand": ".devcontainer/postCreateCommand.sh",
+    // alternative: apache2ctl start (but requires root)
+    "postAttachCommand": "php -S 0.0.0.0:8080"
+}

@@ -21,6 +21,8 @@ interface AddressInterface
      *
      * @return int
      *
+     * @since 1.14.0
+     *
      * @example 32 for IPv4
      * @example 128 for IPv6
      */
@@ -51,6 +53,8 @@ interface AddressInterface
      *
      * @return string
      *
+     * @since 1.14.0
+     *
      * @example For localhost: For IPv4 you'll get '01111111000000000000000000000001' (32 digits), for IPv6 '00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001' (128 digits)
      */
     public function getBits();
@@ -59,6 +63,8 @@ interface AddressInterface
      * Get the type of the IP address.
      *
      * @return int One of the \IPLib\Address\Type::T_... constants
+     *
+     * @phpstan-return \IPLib\Address\Type::T_IPv4|\IPLib\Address\Type::T_IPv6
      */
     public function getAddressType();
 
@@ -66,6 +72,8 @@ interface AddressInterface
      * Get the default RFC reserved range type.
      *
      * @return int One of the \IPLib\Range\Type::T_... constants
+     *
+     * @since 1.5.0
      */
     public static function getDefaultReservedRangeType();
 
@@ -73,6 +81,8 @@ interface AddressInterface
      * Get the RFC reserved ranges (except the ones of type getDefaultReservedRangeType).
      *
      * @return \IPLib\Address\AssignedRange[] ranges are sorted
+     *
+     * @since 1.5.0
      */
     public static function getReservedRanges();
 
@@ -100,9 +110,28 @@ interface AddressInterface
     public function matches(RangeInterface $range);
 
     /**
+     * Get the address at a certain distance from this address.
+     *
+     * @param int|numeric-string|mixed $n the distance of the address (can be negative)
+     *
+     * @return \IPLib\Address\AddressInterface|null return NULL if $n is not an integer or NULL if $n is neither an integer nor a string containing a valid integer, or if the final address would be invalid
+     *
+     * @since 1.15.0
+     * @since 1.21.0 $n can also be a numeric string
+     *
+     * @example passing 1 to the address 127.0.0.1 will result in 127.0.0.2
+     * @example passing -1 to the address 127.0.0.1 will result in 127.0.0.0
+     * @example passing -1 to the address 0.0.0.0 will result in NULL
+     */
+    public function getAddressAtOffset($n);
+
+    /**
      * Get the address right after this IP address (if available).
      *
      * @return \IPLib\Address\AddressInterface|null
+     *
+     * @see \IPLib\Address\AddressInterface::getAddressAtOffset()
+     * @since 1.4.0
      */
     public function getNextAddress();
 
@@ -110,6 +139,9 @@ interface AddressInterface
      * Get the address right before this IP address (if available).
      *
      * @return \IPLib\Address\AddressInterface|null
+     *
+     * @see \IPLib\Address\AddressInterface::getAddressAtOffset()
+     * @since 1.4.0
      */
     public function getPreviousAddress();
 
@@ -118,8 +150,36 @@ interface AddressInterface
      *
      * @return string
      *
+     * @since 1.12.0
+     *
      * @example for IPv4 it returns something like x.x.x.x.in-addr.arpa
      * @example for IPv6 it returns something like x.x.x.x..x.x.x.x.x.x.x.x.x.x.x.x.x.x.x.x.x.x.x.x.x.x.x.x.x.x.x.ip6.arpa
      */
     public function getReverseDNSLookupName();
+
+    /**
+     * Shift the bits of the address, padding with zeroes.
+     *
+     * @param int $bits If negative the bits will be shifted left, if positive the bits will be shifted right
+     *
+     * @return self
+     *
+     * @since 1.20.0
+     *
+     * @example shifting by 1 127.0.0.1 you'll have 63.128.0.0
+     * @example shifting by -1 127.0.0.1 you'll have 254.0.0.2
+     */
+    public function shift($bits);
+
+    /**
+     * Create a new IP address by adding to this address another address.
+     *
+     * @return self|null returns NULL if $other is not compatible with this address, or if it generates an invalid address
+     *
+     * @since 1.20.0
+     *
+     * @example adding 0.0.0.10 to 127.0.0.1 generates the IP 127.0.0.11
+     * @example adding 255.0.0.10 to 127.0.0.1 generates NULL
+     */
+    public function add(AddressInterface $other);
 }

@@ -2,18 +2,19 @@
 
 ## Active contributors
 
-Simon Rupf - current developer and maintainer  
-rugk - security review, doc improvment, JS refactoring & various other stuff  
-R4SAS - python client, compression, blob URI to support larger attachments
+* Simon Rupf - current developer and maintainer
+* rugk - security review, doc improvment, JS refactoring & various other stuff
+* R4SAS - python client, compression, blob URI to support larger attachments
+* Mikhail Romanov - UI improvements, theme switching, clipboard support, multi-file upload, bugfixes, code refactoring
+* Karthik Kasturi - shlink proxy and url shortening bugfixes
 
 ## Past contributions
 
-Sébastien Sauvage - original idea and main developer
-
+* Sébastien Sauvage - original idea and main developer
 * Alexey Gladkov - syntax highlighting
 * Greg Knaddison - robots.txt
 * MrKooky - HTML5 markup, CSS cleanup
-* Simon Rupf - WebCrypto, unit tests, containers images, database backend, MVC, configuration, i18n
+* Simon Rupf - WebCrypto, unit tests, container images, database backend, MVC, configuration, i18n
 * Hexalyse - Password protection
 * Viktor Stanchev - File upload support
 * azlux - Tab character input support
@@ -29,10 +30,16 @@ Sébastien Sauvage - original idea and main developer
 * Lucas Savva - configurable config file location, NixOS packaging
 * rodehoed - option to exempt ips from the rate-limiter
 * Mark van Holsteijn - Google Cloud Storage backend
+* Austin Huang - Oracle database support
+* Felix J. Ogris - S3 Storage backend, script for data backend migrations, dropped singleton behaviour of data backends
+* Mounir Idrassi & J. Mozdzen - secure YOURLS integration
+* Felipe Nakandakari - enabled AWS SDK to use default credential provider chain in the S3 Storage backend
+* Aaron Sherber - cache control headers for API calls & use of `shortenviayourls` in query parameters
 
 ## Translations
+
 * Hexalyse - French
-* Kuba Niewiarowski - Polish
+* Kuba Niewiarowski, Mariusz Krzaczkowski - Polish
 * Gabbalo - German
 * Draky50110 - French
 * Filip Muki Dobranić - Slovene
@@ -53,3 +60,16 @@ Sébastien Sauvage - original idea and main developer
 * whenwesober - Indonesian
 * retiolus - Catalan
 * sarnane - Estonian
+* foxsouns - Lojban
+* Patriccollu di Santa Maria è Sichè - Corsican
+* Markus Mikkonen - Finnish
+* Emir Ensar Rahmanlar - Turkish
+* Stevo984 - Slovak
+* Christos Karamolegkos - Greek
+* jaideejung007 - Thai
+* Nicolas Le Gall - Japanese
+* lazerns - Arabic
+* Edward205 - Romanian
+* babiloof - Swedish
+* Ali Fani - Persian
+* Peter Dave Hello - Chinese (Traditional)
